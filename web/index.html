@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1d2219" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>林间小屋</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 8 8 3l6 5v6H2z' fill='%237d6a64'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="loading" class="loading">
+      <div class="loading-card">
+        <div class="loading-title">林间小屋</div>
+        <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
+        <div class="loading-text" id="loading-text">正在加载…</div>
+      </div>
+    </div>
+
+    <div id="error" class="error" hidden>
+      <div class="error-card">
+        <div class="error-title">出错了</div>
+        <pre class="error-text" id="error-text"></pre>
+        <button type="button" class="error-close" id="error-close">关闭</button>
+      </div>
+    </div>
+
+    <div id="top" class="top" hidden>
+      <div class="seg seg-quality" role="radiogroup" aria-label="画质">
+        <button type="button" role="radio" data-quality="auto">自动</button>
+        <button type="button" role="radio" data-quality="low">低</button>
+        <button type="button" role="radio" data-quality="medium">标准</button>
+        <button type="button" role="radio" data-quality="high">高</button>
+      </div>
+    </div>
+
+    <div id="hint" class="hint" hidden></div>
+
+    <div id="panel" class="panel" hidden>
+      <div class="time">
+        <div class="time-head">
+          <span class="time-clock" id="time-clock">09:00</span>
+          <span class="time-part" id="time-part">上午</span>
+        </div>
+        <div class="slider" id="time-slider" role="slider" tabindex="0" aria-label="时间" aria-valuemin="0" aria-valuemax="24" aria-valuenow="9" aria-valuetext="09:00">
+          <div class="slider-track" id="slider-track"></div>
+          <div class="slider-thumb" id="slider-thumb"></div>
+        </div>
+        <div class="slider-scale" aria-hidden="true"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+      </div>
+      <div class="rows">
+        <div class="seg" role="group" aria-label="时段">
+          <button type="button" data-tod="day">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" /></svg>
+            <span>白天</span>
+          </button>
+          <button type="button" data-tod="dusk">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 16a5.5 5.5 0 0 1 11 0" /><path d="M2.5 16h19M5 20h14M12 4.5v3M4.6 8.6l2 2M19.4 8.6l-2 2" /></svg>
+            <span>黄昏</span>
+          </button>
+          <button type="button" data-tod="night">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.5A7.8 7.8 0 0 1 9.5 4.5a7.8 7.8 0 1 0 10 10z" /></svg>
+            <span>夜晚</span>
+          </button>
+        </div>
+        <div class="seg" role="group" aria-label="镜头">
+          <button type="button" data-preset="overview">总览</button>
+          <button type="button" data-preset="closeup">特写</button>
+          <button type="button" data-preset="free">自由</button>
+        </div>
+      </div>
+    </div>
+
+    <button type="button" id="fps" class="fps" hidden aria-label="帧率，点按显示详细信息" aria-controls="debug" aria-expanded="false"><span id="fps-rate">-- FPS</span><span id="fps-extra" class="fps-extra"></span></button>
+    <pre id="debug" class="debug" hidden></pre>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

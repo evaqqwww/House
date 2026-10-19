@@ -1,0 +1,6 @@
+web/node_modules/
+web/dist/
+*.blend1
+__pycache__/
+*.pyc
+.claude/
