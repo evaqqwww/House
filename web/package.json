@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "dev": "vite --port 5173 --strictPort --host 127.0.0.1",
     "dev:lan": "vite --port 5173 --host 0.0.0.0",
     "build": "vite build",

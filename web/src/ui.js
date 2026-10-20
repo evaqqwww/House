@@ -1,5 +1,7 @@
-// DOM UI (touch-first, Chinese): loading screen, error overlay, the time slider with 白天 / 黄昏 / 夜晚 presets,
-// camera presets 总览 / 特写 / 自由, the quality selector, the free-camera hint, the FPS badge and the debug panel.
+// Touch-first controls: icon shortcuts and a compact time window, camera modes, quality and diagnostics.
+import { createTimeGesture } from './time-gesture.js';
+import { createIdleControls } from './idle-controls.js';
+
 const $ = (id) => document.getElementById(id);
 
 const errors = [];
@@ -8,12 +10,15 @@ const QUALITY_LABEL = { auto: '自动', low: '低', medium: '标准', high: '高
 const DAY_PARTS = [
   [0, '深夜'], [4.6, '黎明'], [6.5, '清晨'], [8.5, '上午'], [11, '正午'], [14, '下午'], [16.5, '黄昏'], [19, '夜晚'], [23.5, '深夜'],
 ];
+let resetIdleClock = () => {};
+let wakeControls = () => {};
 
 export function showError(err, context = '') {
   const msg = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err);
   errors.push(`${context ? `[${context}] ` : ''}${msg}`.trim());
   $('error-text').textContent = errors.join('\n\n');
   $('error').hidden = false;
+  wakeControls();
 }
 
 export function installErrorHandlers() {
@@ -36,6 +41,7 @@ export function hideLoading() {
   el.classList.add('done');
   setTimeout(() => {
     el.hidden = true;
+    resetIdleClock();
   }, 700);
 }
 
@@ -52,66 +58,171 @@ function dayPart(h) {
 
 /**
  * @param {{ onHour:(h:number)=>void, onTimePreset:(name:string)=>void, onPreset:(name:string)=>void,
- *           onQuality:(q:string)=>void, trackGradient:string, touch:boolean }} opts
+ *           onQuality:(q:string)=>void, touch:boolean }} opts
  */
-export function initControls({ onHour, onTimePreset, onPreset, onQuality, trackGradient, touch }) {
+export function initControls({ onHour, onTimePreset, onPreset, onQuality, touch }) {
   $('panel').hidden = false;
   $('top').hidden = false;
   $('hint').textContent = touch ? '单指拖动旋转 · 双指缩放平移' : '拖动旋转 · 滚轮缩放 · 右键平移';
-  $('slider-track').style.background = trackGradient;
-
-  // keep the hint above the panel, whatever its height
   const panel = $('panel');
-  const setPanelHeight = () => document.documentElement.style.setProperty('--panel-h', `${panel.offsetHeight}px`);
-  if (window.ResizeObserver) new ResizeObserver(setPanelHeight).observe(panel);
+  const timeWindow = $('time-window');
+  const slider = $('time-slider');
+  const presets = $('time-presets');
+  let returnFocus = null;
+  let closeTimer;
+  const setPanelHeight = () => document.documentElement.style.setProperty('--panel-h', `${panel.offsetHeight + (timeWindow.hidden ? 0 : timeWindow.offsetHeight + 10)}px`);
+  if (window.ResizeObserver) {
+    const observer = new ResizeObserver(setPanelHeight);
+    observer.observe(panel);
+    observer.observe(timeWindow);
+  }
   setPanelHeight();
 
-  const slider = $('time-slider');
-  let dragging = null;
-  const hourAt = (e) => {
-    const r = slider.getBoundingClientRect();
-    return Math.min(Math.max((e.clientX - r.left) / Math.max(r.width, 1), 0), 1) * 24;
+  function setOpen(open) {
+    clearTimeout(closeTimer);
+    if (!open && slider.contains(document.activeElement)) {
+      (returnFocus || presets.querySelector('.active') || presets.querySelector('button')).focus({ preventScroll: true });
+    }
+    timeWindow.hidden = !open;
+    setPanelHeight();
+  }
+
+  const selectTime = (choice) => {
+    setOpen(false);
+    onTimePreset(choice);
   };
-  slider.addEventListener('pointerdown', (e) => {
-    if (e.button !== undefined && e.button !== 0) return;
-    dragging = e.pointerId;
-    slider.setPointerCapture(e.pointerId);
-    slider.classList.add('dragging');
-    onHour(hourAt(e));
-    e.preventDefault();
+  const gesture = createTimeGesture({
+    readHour: () => Number(slider.getAttribute('aria-valuenow')) || 0,
+    onHour,
+    onOpen: () => setOpen(true),
+    onTap: selectTime,
+    onDragging: (dragging) => {
+      panel.classList.toggle('dragging', dragging);
+      if (!dragging) closeTimer = setTimeout(() => setOpen(false), 900);
+    },
   });
-  slider.addEventListener('pointermove', (e) => {
-    if (dragging !== e.pointerId) return;
-    onHour(hourAt(e));
+
+  for (const surface of [presets, slider]) {
+    surface.addEventListener('pointerdown', (e) => {
+      if (e.isPrimary === false || e.button !== 0) return;
+      clearTimeout(closeTimer);
+      const button = e.target.closest('[data-tod]');
+      const choice = button?.dataset.tod;
+      if (!gesture.start(e, choice, surface === slider)) return;
+      if (button) returnFocus = button;
+      surface.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    surface.addEventListener('pointermove', (e) => gesture.move(e));
+    surface.addEventListener('pointerup', (e) => gesture.end(e));
+    surface.addEventListener('pointercancel', (e) => gesture.end(e, true));
+    surface.addEventListener('lostpointercapture', (e) => gesture.end(e, true));
+    surface.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (e.isPrimary !== false && !e.target.closest('.time-control')) setOpen(false);
   });
-  const end = (e) => {
-    if (dragging !== e.pointerId) return;
-    dragging = null;
-    slider.classList.remove('dragging');
-  };
-  slider.addEventListener('pointerup', end);
-  slider.addEventListener('pointercancel', end);
-  slider.addEventListener('lostpointercapture', end);
-  slider.addEventListener('keydown', (e) => {
+  const cancel = () => { gesture.cancel(); setOpen(false); };
+  window.addEventListener('blur', cancel);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) cancel(); });
+  panel.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { cancel(); e.preventDefault(); }
+  });
+  const timeKeys = { ArrowLeft: -0.25, ArrowDown: -0.25, ArrowRight: 0.25, ArrowUp: 0.25, PageDown: -1, PageUp: 1 };
+  function adjustTime(e) {
+    clearTimeout(closeTimer);
     const h = Number(slider.getAttribute('aria-valuenow')) || 0;
-    const step = { ArrowLeft: -0.25, ArrowDown: -0.25, ArrowRight: 0.25, ArrowUp: 0.25, PageDown: -1, PageUp: 1 }[e.key];
+    const step = timeKeys[e.key];
     if (step !== undefined) onHour(Math.min(Math.max(h + step, 0), 24));
     else if (e.key === 'Home') onHour(0);
     else if (e.key === 'End') onHour(24);
     else return;
     e.preventDefault();
+  }
+  slider.addEventListener('keydown', adjustTime);
+  presets.addEventListener('keydown', (e) => {
+    if (!(e.key in timeKeys) && e.key !== 'Home' && e.key !== 'End') return;
+    returnFocus = e.target.closest('[data-tod]');
+    setOpen(true);
+    slider.focus({ preventScroll: true });
+    adjustTime(e);
   });
 
-  for (const b of document.querySelectorAll('[data-tod]')) b.addEventListener('click', () => onTimePreset(b.dataset.tod));
+  // Pointer taps are resolved by the gesture; native keyboard/assistive clicks still work.
+  for (const b of document.querySelectorAll('[data-tod]')) b.addEventListener('click', (e) => {
+    if (e.detail === 0) selectTime(b.dataset.tod);
+  });
   for (const b of document.querySelectorAll('[data-preset]')) b.addEventListener('click', () => onPreset(b.dataset.preset));
   for (const b of document.querySelectorAll('[data-quality]')) b.addEventListener('click', () => onQuality(b.dataset.quality));
+  installIdleVisibility(cancel);
+}
+
+function installIdleVisibility(closeTimeWindow) {
+  const chrome = ['panel', 'top', 'fps', 'debug', 'hint'].map($);
+  const wake = $('wake-controls');
+  const heldInputs = new Set();
+  let lastFocus = null;
+  const idle = createIdleControls({
+    canHide: () => $('loading').hidden && $('error').hidden && !document.hidden,
+    onHide: () => {
+      closeTimeWindow();
+      lastFocus = document.activeElement;
+      const hadFocus = chrome.some((el) => el.contains(lastFocus));
+      for (const el of chrome) el.inert = true;
+      document.body.classList.add('ui-idle');
+      wake.hidden = false;
+      if (hadFocus) wake.focus({ preventScroll: true });
+    },
+    onShow: () => {
+      document.body.classList.remove('ui-idle');
+      for (const el of chrome) el.inert = false;
+      wake.hidden = true;
+    },
+  });
+  resetIdleClock = () => idle.activity();
+  wakeControls = () => idle.wake();
+
+  // A transparent wake surface consumes the complete first click before normal controls return.
+  wake.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    idle.wake();
+    if (e.detail === 0 && lastFocus?.isConnected) lastFocus.focus({ preventScroll: true });
+  });
+  wake.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  const hold = (token) => { heldInputs.add(token); idle.hold(token); };
+  const release = (token) => { if (heldInputs.delete(token)) idle.release(token); };
+  document.addEventListener('pointerdown', (e) => hold(`pointer:${e.pointerId}`), { capture: true, passive: true });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    document.addEventListener(type, (e) => release(`pointer:${e.pointerId}`), { capture: true, passive: true });
+  }
+  document.addEventListener('keydown', (e) => hold(`key:${e.code || e.key}`), { capture: true });
+  document.addEventListener('keyup', (e) => release(`key:${e.code || e.key}`), { capture: true });
+  document.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'mouse' && e.buttons === 0) release(`pointer:${e.pointerId}`);
+    resetIdleClock();
+  }, { capture: true, passive: true });
+  for (const type of ['wheel', 'click', 'focusin']) {
+    document.addEventListener(type, resetIdleClock, { capture: true, passive: true });
+  }
+  const releaseAll = () => { for (const token of heldInputs) release(token); };
+  window.addEventListener('blur', releaseAll);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) releaseAll();
+    else resetIdleClock();
+  });
 }
 
 let hintTimer = 0;
-/** sliderHour: the slider position (0 - 24, 24 kept at the right end) */
+/** sliderHour: the time adjustment position (0–24, with both midnight endpoints available). */
 export function reflectState({ preset, quality, resolvedQuality, sliderHour, todPreset }) {
   if (preset) {
-    for (const b of document.querySelectorAll('[data-preset]')) b.classList.toggle('active', b.dataset.preset === preset);
+    for (const b of document.querySelectorAll('[data-preset]')) {
+      const active = b.dataset.preset === preset;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-pressed', String(active));
+    }
     const hint = $('hint');
     clearTimeout(hintTimer);
     hint.hidden = preset !== 'free';
@@ -126,21 +237,25 @@ export function reflectState({ preset, quality, resolvedQuality, sliderHour, tod
   }
   if (sliderHour !== undefined) {
     const h = Math.min(Math.max(sliderHour, 0), 24);
-    $('slider-thumb').style.left = `${(h / 24) * 100}%`;
     const text = formatHour(h);
-    $('time-clock').textContent = text;
-    $('time-part').textContent = dayPart(((h % 24) + 24) % 24);
+    $('time-value').textContent = text;
     const slider = $('time-slider');
     slider.setAttribute('aria-valuenow', h.toFixed(2));
-    slider.setAttribute('aria-valuetext', text);
+    slider.setAttribute('aria-valuetext', `${text} ${dayPart(h % 24)}`);
   }
   if (todPreset !== undefined) {
-    for (const b of document.querySelectorAll('[data-tod]')) b.classList.toggle('active', b.dataset.tod === todPreset);
+    const h = Number($('time-slider').getAttribute('aria-valuenow')) % 24;
+    const period = todPreset || (h < 4.6 || h >= 19 ? 'night' : h < 11 ? 'morning' : h < 16.5 ? 'day' : 'dusk');
+    for (const b of document.querySelectorAll('[data-tod]')) {
+      const active = b.dataset.tod === period;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-pressed', String(active));
+    }
   }
 }
 
 /**
- * The always-visible FPS badge (frame rate, current tier, render pixel ratio); tapping it calls onToggle. The
+ * The FPS badge (frame rate, current tier, render pixel ratio); tapping it calls onToggle. The
  * returned function takes a getter of { fps, tier, pixelRatio } and refreshes the badge twice a second.
  */
 export function createFpsBadge(onToggle) {

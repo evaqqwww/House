@@ -41,42 +41,44 @@
     <div id="hint" class="hint" hidden></div>
 
     <div id="panel" class="panel" hidden>
-      <div class="time">
-        <div class="time-head">
-          <span class="time-clock" id="time-clock">09:00</span>
-          <span class="time-part" id="time-part">上午</span>
+      <section class="time-control" aria-label="时间控制">
+        <div class="time-window" id="time-window" hidden>
+          <div class="time-adjust" id="time-slider" role="slider" tabindex="0" aria-label="时间，左右拖动微调" aria-describedby="time-help" aria-valuemin="0" aria-valuemax="24" aria-valuenow="9" aria-valuetext="09:00">
+            <span class="time-value" id="time-value" aria-hidden="true">09:00</span>
+          </div>
         </div>
-        <div class="slider" id="time-slider" role="slider" tabindex="0" aria-label="时间" aria-valuemin="0" aria-valuemax="24" aria-valuenow="9" aria-valuetext="09:00">
-          <div class="slider-track" id="slider-track"></div>
-          <div class="slider-thumb" id="slider-thumb"></div>
-        </div>
-        <div class="slider-scale" aria-hidden="true"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
-      </div>
-      <div class="rows">
-        <div class="seg" role="group" aria-label="时段">
-          <button type="button" data-tod="day">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" /></svg>
-            <span>白天</span>
+        <div class="time-presets" id="time-presets" role="group" aria-label="时段，点按切换，长按或左右拖动微调" aria-describedby="time-help">
+          <button type="button" class="icon-button time-button" data-tod="morning" aria-label="清晨，07:00" aria-describedby="time-help" aria-pressed="false" title="清晨">
+            <span class="atlas-icon time-icon icon-morning" aria-hidden="true"></span>
           </button>
-          <button type="button" data-tod="dusk">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 16a5.5 5.5 0 0 1 11 0" /><path d="M2.5 16h19M5 20h14M12 4.5v3M4.6 8.6l2 2M19.4 8.6l-2 2" /></svg>
-            <span>黄昏</span>
+          <button type="button" class="icon-button time-button" data-tod="day" aria-label="白天，13:00" aria-describedby="time-help" aria-pressed="false" title="白天">
+            <span class="atlas-icon time-icon icon-day" aria-hidden="true"></span>
           </button>
-          <button type="button" data-tod="night">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.5A7.8 7.8 0 0 1 9.5 4.5a7.8 7.8 0 1 0 10 10z" /></svg>
-            <span>夜晚</span>
+          <button type="button" class="icon-button time-button" data-tod="dusk" aria-label="黄昏，17:24" aria-describedby="time-help" aria-pressed="false" title="黄昏">
+            <span class="atlas-icon time-icon icon-dusk" aria-hidden="true"></span>
+          </button>
+          <button type="button" class="icon-button time-button" data-tod="night" aria-label="夜晚，22:00" aria-describedby="time-help" aria-pressed="false" title="夜晚">
+            <span class="atlas-icon time-icon icon-night" aria-hidden="true"></span>
           </button>
         </div>
-        <div class="seg" role="group" aria-label="镜头">
-          <button type="button" data-preset="overview">总览</button>
-          <button type="button" data-preset="closeup">特写</button>
-          <button type="button" data-preset="free">自由</button>
-        </div>
+        <span class="sr-only" id="time-help">点按时段切换；长按或左右拖动显示时间窗口，向右滑时间前进，向左滑时间后退。聚焦时段图标后，方向键显示时间并调整15分钟，翻页键调整1小时，Home和End跳到一天的两端，Escape收起。</span>
+      </section>
+      <div class="camera-presets" role="group" aria-label="相机视角">
+        <button type="button" class="icon-button camera-button" data-preset="closeup" aria-label="特写" aria-pressed="false" title="特写">
+          <span class="atlas-icon camera-icon icon-closeup" aria-hidden="true"></span>
+        </button>
+        <button type="button" class="icon-button camera-button" data-preset="overview" aria-label="总览" aria-pressed="false" title="总览">
+          <span class="atlas-icon camera-icon icon-overview" aria-hidden="true"></span>
+        </button>
+        <button type="button" class="icon-button camera-button" data-preset="free" aria-label="自由" aria-pressed="false" title="自由">
+          <span class="atlas-icon camera-icon icon-free" aria-hidden="true"></span>
+        </button>
       </div>
     </div>
 
     <button type="button" id="fps" class="fps" hidden aria-label="帧率，点按显示详细信息" aria-controls="debug" aria-expanded="false"><span id="fps-rate">-- FPS</span><span id="fps-extra" class="fps-extra"></span></button>
     <pre id="debug" class="debug" hidden></pre>
+    <button type="button" id="wake-controls" class="wake-controls" aria-label="显示界面控件" hidden></button>
 
     <script type="module" src="./src/main.js"></script>
   </body>

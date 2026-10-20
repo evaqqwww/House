@@ -7,12 +7,12 @@ import { createCameraRig, MODE_ALIASES } from './cameras.js';
 import { createResolutionController, detectDevice, QUALITY_ALIASES, TIERS } from './quality.js';
 import { hourDelta } from './timeofday.js';
 import { createGpuTimer } from './gputimer.js';
-import { loadViewLut, viewTransformRGB } from './viewlut.js';
+import { loadViewLut } from './viewlut.js';
 import * as ui from './ui.js';
 
 const params = new URLSearchParams(location.search);
 const ASSET_BASE = `${import.meta.env.BASE_URL}assets/`;
-const TOD_ALIASES = { day: 'day', 白天: 'day', dusk: 'dusk', 黄昏: 'dusk', night: 'night', 夜晚: 'night' };
+const TOD_ALIASES = { morning: 'morning', 清晨: 'morning', day: 'day', 白天: 'day', dusk: 'dusk', 黄昏: 'dusk', night: 'night', 夜晚: 'night' };
 
 ui.installErrorHandlers();
 
@@ -29,19 +29,6 @@ function readPresets() {
     else if (TOD_ALIASES[t]) tod = TOD_ALIASES[t];
   }
   return { camera, tod };
-}
-
-/** CSS gradient of the visible sky over the day for the slider track: the sky dome a little above the horizon, through
- * the view transform as the screen shows it */
-function skyGradient(tod, viewLut) {
-  const stops = [];
-  for (let h = 0; h <= 24; h += 0.5) {
-    const s = tod.state(h);
-    const c = [0, 1, 2].map((i) => s.domeHorizon[i] * 0.4 + s.domeZenith[i] * 0.6);
-    const d = viewTransformRGB(viewLut, c).map((x) => Math.round(Math.min(Math.max(x, 0), 1) * 255).toString(16).padStart(2, '0'));
-    stops.push(`#${d.join('')} ${((h / 24) * 100).toFixed(1)}%`);
-  }
-  return `linear-gradient(90deg, ${stops.join(', ')})`;
 }
 
 async function main() {
@@ -172,7 +159,6 @@ async function main() {
     onTimePreset: (p) => setTimePreset(p),
     onPreset: (p) => setPreset(p),
     onQuality: (q) => setQuality(q),
-    trackGradient: skyGradient(tod, viewLut),
     touch: device.mobile || (window.matchMedia?.('(pointer: coarse)').matches ?? false),
   });
   ui.reflectState({ quality, resolvedQuality: tier.key, sliderHour });
