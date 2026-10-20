@@ -24,8 +24,9 @@ const DEFAULTS = {
   shadowReach: 0.9,
   wrap: 0.1, // leaf cards face every way: part of the direct light reaches the canopy like a wrapped diffuse
   skyZenith: 0.9, // zenith fraction of the sky light the canopy sees
-  lamp: 0.12, // lantern point light on the canopies
+  lamp: 0.24, // warm lantern spill on the nearby canopies (no extra lights or shadow maps)
   canopyBottom: 0.4, // light reaching the lowest leaves relative to the top of the canopy
+  nightCool: [0.75, 0.8, 3.3], // blue leaf scattering under moonlight; warm lantern light keeps the leaf colour
 };
 
 const vertexShader = /* glsl */ `
@@ -34,6 +35,8 @@ ${LIGHT_PARS}
 ${SHADOW_PARS}
 attribute vec2 aLeaf; // leaf flag, height in the canopy (0 lowest leaf, 1 top)
 uniform float uTime;
+uniform float uNight;
+uniform vec3 uCanopyNightCool;
 uniform vec4 uLeaf;     // translucency, glow, glow power, scatter
 uniform vec3 uWarm;
 uniform vec4 uTreeLight; // direct scale, leaf AO, bark AO, wind
@@ -88,7 +91,9 @@ void main() {
   float ao = mix( uTreeLight.z, uTreeLight.y, leaf );
   vec3 indirect = ao * hk * ( ( 1.0 - trans ) * irr + trans * uWarm * behind );
 
-  vColor = albedo * ( direct + indirect + uTreeSky.y * lampPointLight( wp.xyz, n ) );
+  vec3 cool = albedo * ( direct + indirect );
+  cool *= mix( vec3( 1.0 ), uCanopyNightCool, uNight * leaf );
+  vColor = cool + albedo * uTreeSky.y * lampPointLight( wp.xyz, n );
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 
@@ -114,6 +119,7 @@ export function createTreeMaterial(lighting) {
       uWrap: { value: DEFAULTS.wrap },
       uTreeSky: { value: new Vector2(DEFAULTS.skyZenith, DEFAULTS.lamp) },
       uCanopyBottom: { value: DEFAULTS.canopyBottom },
+      uCanopyNightCool: { value: new Color().fromArray(DEFAULTS.nightCool) },
     },
     vertexShader,
     fragmentShader,

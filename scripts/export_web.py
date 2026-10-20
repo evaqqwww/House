@@ -15,7 +15,7 @@ Light layers (light units L: radiance = albedo * L, all linear), combined at run
       (1 on open flat ground, less where occluded, interreflections included)
   B   DIFFUSE indirect light of the sun at the default-hour direction, strength 1, white; sky and lamps off
   Lp  DIFFUSE light (direct + indirect) of the lamp emitters at lamp = 1 (lantern glass, window glass and the
-      LanternLight point light), sky / sun / moon off, stored as luminance(L) / luminance(lampColor)
+      LanternLight point and soft window spill areas), sky / sun / moon off, stored as luminance(L) / luminance(lampColor)
   Z   zenith fraction: luminance of the light under a grey sky shaped like the zenith weight of the sky gradient
       over luminance(S); skyRad = skyStrength * mix(skyHorizon, skyZenith, Z) per surface (up-facing open ground
       sees mostly zenith colour, walls and rock faces mostly horizon colour)
@@ -38,6 +38,7 @@ Output (manifest.version 2):
   terrain_lamp.png   512^2 grey data: sqrt(Lp / lampScale)
   terrain_zenith.png 512^2 grey data: Z
   ground_albedo.png  512^2 sRGB: the ground colour under the grass
+  ground_cover.png   512^2 grey data: grass surface coverage before canopy thinning
   grass.png          512^2 RGB data: R = grass density, G/B = terrain height (16 bit, big endian)
   manifest.json      layer scales, map half size, grass, trees (instances, LOD distances), time of day, default sun
                      elevation, lantern light position, haze, camera targets and close-up corridor, file sizes
@@ -398,7 +399,7 @@ class BakeLights:
         self.s = state
         self.sun = bpy.data.objects.get("Sun")
         self.moon = bpy.data.objects.get("Moon")
-        self.point = bpy.data.objects.get("LanternLight")
+        self.local_lights = timeofday.local_lights()
         self.smoke = bpy.data.objects.get(SMOKE)
         self.world = sc.world
         self.white = self._flat_world("World_BakeWhite", 1.0)
@@ -408,7 +409,9 @@ class BakeLights:
             "sun": (self.sun.data.energy, tuple(self.sun.data.color), self.sun.rotation_euler.copy(),
                     self.sun.data.angle),
             "moon": self.moon.data.energy if self.moon else None,
-            "point": (self.point.data.energy, tuple(self.point.data.color)) if self.point else None,
+            "local_lights": [(light, light.data.energy, tuple(light.data.color),
+                              getattr(light.data, "shadow_soft_size", None))
+                             for light in self.local_lights],
             "smoke": self.smoke.hide_render if self.smoke else None,
             "emission": {n: self._emission(n) for n in ("M_House_Lantern", "M_House_Glass")},
         }
@@ -473,9 +476,7 @@ class BakeLights:
         if self.moon:
             self.moon.data.energy = 0.0
         lamp = mode == "lamp"
-        if self.point:
-            self.point.data.energy = lamps["pointWatts"] if lamp else 0.0
-            self.point.data.color = lamps["color"]
+        timeofday.set_local_lights(lamps, 1.0 if lamp else 0.0, self.local_lights)
         self._set_emission("M_House_Lantern", lamps["color"], lamps["lanternEmission"] if lamp else 0.0)
         self._set_emission("M_House_Glass", lamps["color"], lamps["windowEmission"] if lamp else 0.0)
         if self.smoke:
@@ -486,8 +487,10 @@ class BakeLights:
         self.sun.data.energy, self.sun.data.color, self.sun.rotation_euler, self.sun.data.angle = e, c, r, a
         if self.moon:
             self.moon.data.energy = self.saved["moon"]
-        if self.point:
-            self.point.data.energy, self.point.data.color = self.saved["point"]
+        for light, energy, color, radius in self.saved["local_lights"]:
+            light.data.energy, light.data.color = energy, color
+            if radius is not None:
+                light.data.shadow_soft_size = radius
         if self.smoke:
             self.smoke.hide_render = self.saved["smoke"]
         for name, v in self.saved["emission"].items():
@@ -1275,16 +1278,24 @@ def export_terrain(full, coll):
     return ob
 
 
-def grass_map(terrain_ob, full, trees, out):
-    """grass.png: R = density (GroundCoverBase grass_mask, faded out under tree canopies), G/B = 16-bit height
-    of the export terrain (ray cast); returns the height range {heightMin, heightMax}."""
+def ground_cover_map(full, out):
+    """Write ground_cover.png and return the float surface coverage before canopy thinning."""
     xs, ys, _, _ = _original_grid(full)
     cover = bpy.data.meshes[GROUND_COVER_MESH]
     gm = np.empty(len(cover.vertices), np.float32)
     cover.attributes["grass_mask"].data.foreach_get("value", gm)
     gm = gm.reshape(len(ys), len(xs))
     X, Y = _map_xy(GRASS_RES)
-    dens = _grid_sample(xs, ys, gm, X.ravel(), Y.ravel()).reshape(GRASS_RES, GRASS_RES)
+    coverage = np.clip(_grid_sample(xs, ys, gm, X.ravel(), Y.ravel()), 0.0, 1.0).reshape(GRASS_RES, GRASS_RES)
+    write_png(os.path.join(out, "ground_cover.png"), np.round(coverage * 255.0).astype(np.uint8))
+    return coverage
+
+
+def grass_map(terrain_ob, full, trees, out):
+    """grass.png: R = density (GroundCoverBase grass_mask, faded out under tree canopies), G/B = 16-bit height
+    of the export terrain (ray cast); returns the height range {heightMin, heightMax}."""
+    dens = ground_cover_map(full, out)
+    X, Y = _map_xy(GRASS_RES)
     canopy = np.zeros_like(dens)
     texel = 2.0 * HALF / GRASS_RES
     for t in trees:
@@ -1670,7 +1681,7 @@ def main():
 
     manifest = build_manifest(tod, state, scales, grass, cams, instances, lod_distances)
     files = ("scene.glb", "terrain_sky.png", "terrain_bounce.png", "terrain_lamp.png", "terrain_zenith.png",
-             "ground_albedo.png", "grass.png")
+             "ground_albedo.png", "ground_cover.png", "grass.png")
     manifest["files"] = {name: os.path.getsize(os.path.join(out, name)) for name in files}
     with open(os.path.join(out, "manifest.json"), "w", newline=LF) as f:
         json.dump(manifest, f, indent=1)

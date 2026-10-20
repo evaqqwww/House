@@ -4,9 +4,10 @@
     s = timeofday.state(18.0)          # interpolated keyframe values + sky dome colours + sun azimuth/elevation
     timeofday.apply(18.0)              # sun, moon, sky, sky dome, lamps, haze, bloom, saturation, exposure
 
-apply() expects the objects and node names created by build_lighting (Sun, Moon, LanternLight, World_Sky's
-SkyMix / SkyBackground / DomeMix nodes, Comp_Look's Bloom / HazeFactor / HazeColor / NightShift / Tint / Saturation /
-SkyExposure nodes) and the house materials M_House_Lantern and M_House_Glass.
+apply() expects the objects and node names created by build_lighting (Sun, Moon, LanternLight, WindowSpill_*, World_Sky's
+SkyMix / SkyBackground / DomeMix nodes, Comp_Look's Bloom / HazeFactor / HazeColor / NightShift / NightDarkRange /
+NightWarmthRange / NightColor / Tint / Saturation / SkyExposure nodes) and the house materials M_House_Lantern and
+M_House_Glass.
 """
 import json
 import math
@@ -83,13 +84,30 @@ def _set_emission(mat_name, color, strength):
         bsdf.inputs["Emission Strength"].default_value = strength
 
 
+def local_lights():
+    """The lantern point and window spill areas share one time-of-day/bake control."""
+    return [ob for ob in bpy.data.objects if ob.type == "LIGHT"
+            and (ob.name == "LanternLight" or "window_spill_area" in ob)]
+
+
+def set_local_lights(lamps, strength, lights=None):
+    for light in local_lights() if lights is None else lights:
+        if light.name == "LanternLight":
+            watts = lamps["pointWatts"]
+            light.data.shadow_soft_size = lamps["pointRadius"]
+        else:
+            watts = (lamps["windowSpillWattsPerSquareMeter"] * light["window_spill_area"]
+                     * light.get("window_spill_multiplier", 1.0))
+        light.data.energy = strength * watts
+        light.data.color = lamps["color"]
+
+
 def apply(hour, scene=None):
     sc = scene or bpy.context.scene
     s = state(hour)
-    up = s["sunElevation"] > 0.0
     sun = bpy.data.objects.get("Sun")
     if sun is not None:
-        sun.data.energy = s["sunStrength"] if up else 0.0
+        sun.data.energy = s["sunStrength"] * common.smoothstep(0.0, 1.5, s["sunElevation"])
         sun.data.color = s["sunColor"]
         sun.data.angle = math.radians(s["sunAngleDeg"])
         sun.rotation_euler = common.sun_rotation(s["sunAzimuth"], max(s["sunElevation"], 0.5))
@@ -116,10 +134,7 @@ def apply(hour, scene=None):
     _set_emission("M_House_Lantern", lamps["color"],
                   LANTERN_DAY_EMISSION + s["lamp"] * (lamps["lanternEmission"] - LANTERN_DAY_EMISSION))
     _set_emission("M_House_Glass", lamps["color"], s["lamp"] * lamps["windowEmission"])
-    point = bpy.data.objects.get("LanternLight")
-    if point is not None:
-        point.data.energy = s["lamp"] * lamps["pointWatts"]
-        point.data.color = lamps["color"]
+    set_local_lights(lamps, s["lamp"])
 
     ng = sc.compositing_node_group
     if ng is not None:
@@ -134,6 +149,15 @@ def apply(hour, scene=None):
             n["Saturation"].inputs["Saturation"].default_value = s["saturation"]
         if "NightShift" in n:
             n["NightShift"].inputs[1].default_value = s["nightShift"]
+        night = load()["nightGrade"]
+        if "NightDarkRange" in n:
+            n["NightDarkRange"].inputs["From Min"].default_value = night["low"]
+            n["NightDarkRange"].inputs["From Max"].default_value = night["high"]
+        if "NightWarmthRange" in n:
+            n["NightWarmthRange"].inputs["From Min"].default_value = night["warmth"][0]
+            n["NightWarmthRange"].inputs["From Max"].default_value = night["warmth"][1]
+        if "NightColor" in n:
+            n["NightColor"].inputs["B"].default_value = (*night["color"], 1.0)
         if "Tint" in n:
             n["Tint"].inputs["B"].default_value = (*s["tint"], 1.0)
         if "SkyExposure" in n:

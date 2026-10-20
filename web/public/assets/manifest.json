@@ -2,7 +2,7 @@
  "version": 2,
  "skyScale": 1.088843,
  "bounceScale": 0.075839,
- "lampScale": 1.193722,
+ "lampScale": 1.472739,
  "terrainUV": {
   "half": 55
  },
@@ -5662,81 +5662,87 @@
   ]
  },
  "timeOfDay": {
-  "notes": "Shared time-of-day model of the Blender scene and the web viewer. Hours 0-24; keyframes are interpolated linearly in hour and wrap at 24. Colours are linear RGB. Azimuth in degrees counter-clockwise from +X in Blender world coordinates; light comes FROM azimuth/elevation. sunStrength and moonStrength are Blender sun strengths (W/m2). lamp scales every lamp emitter (lantern glow, window glass, lantern point light) from 0 (off) to 1 (full strength given in lamps). exposure is in EV. tint multiplies the scene-linear image before tone mapping (white balance / night grade). nightShift (0-1) blends dark areas toward lum * nightColor (luminance-preserving, Purkinje-style night grade) with weight nightShift * (1 - smoothstep(nightLow, nightHigh, lum)) on the scene-linear image before tint and exposure, so lamp-lit areas keep their colour. skyDome holds the colours of the visible sky (camera and reflection rays) by hour, linear RGB, interpolated like the keyframes; the light the sky casts on the scene comes from skyZenith / skyHorizon. The dome mixes horizon to zenith by t^curve, t = the gradient position of the view direction height. In the look the sky dome gets only bloom, the vignette and the view transform (no haze, night grade, tint, saturation or exposure), so its colours are what the screen shows away from the corners.",
-  "defaultHour": 9,
+  "notes": "Shared time-of-day model of the Blender scene and the web viewer. Hours 0-24; keyframes are interpolated linearly in hour and wrap at 24. Colours are linear RGB. Azimuth in degrees counter-clockwise from +X in Blender world coordinates; light comes FROM azimuth/elevation. sunStrength and moonStrength are Blender sun strengths (W/m2). lamp scales every lamp emitter (lantern glow, window glass, lantern point light) from 0 (off) to 1 (full strength given in lamps). exposure is in EV. tint multiplies the scene-linear image before tone mapping (white balance / night grade). nightShift (0-1) blends dark areas toward their own RGB multiplied by nightColor and normalized back to the original Rec.709 luminance (material-chroma-preserving night grade) with weight nightShift * (1 - smoothstep(nightLow, nightHigh, lum)) * (1 - smoothstep(warmthLow, warmthHigh, (r-max(g,b))/max(lum, 1e-5))) on the scene-linear image before tint and exposure, so even dim amber lamp spill keeps its colour; nightGrade.warmth gives the chroma protection range. skyDome holds the colours of the visible sky (camera and reflection rays) by hour, linear RGB, interpolated like the keyframes; the light the sky casts on the scene comes from skyZenith / skyHorizon. The dome mixes horizon to zenith by t^curve, t = the gradient position of the view direction height. In the look the sky dome gets only bloom, the vignette and the view transform (no haze, night grade, tint, saturation or exposure), so its colours are what the screen shows away from the corners.",
+  "defaultHour": 9.0,
   "presets": {
-   "day": 13,
+   "day": 13.0,
    "dusk": 17.4,
-   "night": 22
+   "night": 22.0
   },
   "sunPath": {
    "riseHour": 5.5,
    "setHour": 18.5,
-   "azimuthRise": 40,
-   "azimuthSet": -200,
-   "maxElevation": 46
+   "azimuthRise": 40.0,
+   "azimuthSet": -200.0,
+   "maxElevation": 46.0
   },
   "moon": {
-   "azimuth": 25,
-   "elevation": 52,
+   "azimuth": -110.0,
+   "elevation": 48.0,
    "color": [
     0.4,
     0.55,
-    1
+    1.0
    ],
-   "angleDeg": 3
+   "angleDeg": 3.0
   },
-  "sunAngleDeg": 5,
+  "sunAngleDeg": 5.0,
   "lamps": {
    "color": [
-    1,
-    0.62,
-    0.3
+    1.0,
+    0.52,
+    0.32
    ],
-   "lanternEmission": 30,
-   "windowEmission": 4,
-   "pointWatts": 150
+   "lanternEmission": 14.0,
+   "windowEmission": 2.1,
+   "pointWatts": 220.0,
+   "pointRadius": 0.5,
+   "windowSpillWattsPerSquareMeter": 65.0
   },
   "nightGrade": {
    "color": [
-    0.4,
-    0.85,
-    3.6
+    0.55,
+    0.8,
+    2.4
    ],
    "low": 0.03,
-   "high": 0.25
+   "high": 0.5,
+   "warmth": [
+    0.12,
+    0.65
+   ]
   },
   "skyDome": {
    "curve": 0.5,
    "keyframes": [
     {
-     "hour": 0,
+     "hour": 0.0,
      "zenith": [
-      0.0202,
-      0.00001,
-      0.5577
+      0.0015,
+      0.002,
+      0.024
      ],
      "horizon": [
-      0.0137,
-      0.0202,
-      1.1637
+      0.007,
+      0.01,
+      0.06
      ]
     },
     {
      "hour": 4.3,
      "zenith": [
-      0.0202,
-      0.00001,
-      0.5577
+      0.0015,
+      0.002,
+      0.024
      ],
      "horizon": [
-      0.0137,
-      0.0202,
-      1.1637
+      0.007,
+      0.01,
+      0.06
      ]
     },
     {
-     "hour": 5,
+     "hour": 5.0,
      "zenith": [
       0.0401,
       0.0108,
@@ -5801,7 +5807,7 @@
      ]
     },
     {
-     "hour": 16,
+     "hour": 16.0,
      "zenith": [
       0.0272,
       0.2445,
@@ -5836,7 +5842,7 @@
      "horizon": [
       1.9882,
       0.3477,
-      0.00001
+      1e-05
      ]
     },
     {
@@ -5868,104 +5874,104 @@
     {
      "hour": 20.1,
      "zenith": [
-      0.0109,
-      0.00004,
-      0.6198
+      0.0015,
+      0.002,
+      0.024
      ],
      "horizon": [
-      0.0316,
-      0.025,
-      1.1625
+      0.007,
+      0.01,
+      0.06
      ]
     }
    ]
   },
   "keyframes": [
    {
-    "hour": 0,
-    "sunStrength": 0,
+    "hour": 0.0,
+    "sunStrength": 0.0,
     "sunColor": [
-     1,
+     1.0,
      0.45,
      0.25
     ],
-    "moonStrength": 0.6,
+    "moonStrength": 1.65,
     "skyZenith": [
-     0.01,
-     0.02,
-     0.07
+     0.025,
+     0.05,
+     0.14
     ],
     "skyHorizon": [
-     0.02,
-     0.035,
-     0.085
+     0.045,
+     0.075,
+     0.16
     ],
-    "skyStrength": 1,
+    "skyStrength": 1.0,
     "hazeColor": [
-     0.02,
-     0.04,
-     0.1
+     0.025,
+     0.035,
+     0.09
     ],
-    "hazeAmount": 0.4,
-    "exposure": 0.6,
-    "lamp": 1,
-    "bloom": 0.55,
-    "saturation": 1,
-    "fireflies": 1,
+    "hazeAmount": 0.36,
+    "exposure": 0.7,
+    "lamp": 1.0,
+    "bloom": 0.38,
+    "saturation": 1.0,
+    "fireflies": 1.0,
     "tint": [
-     0.85,
-     0.9,
-     1.05
+     1.0,
+     0.98,
+     1.02
     ],
-    "nightShift": 0.85
+    "nightShift": 0.8
    },
    {
     "hour": 4.6,
-    "sunStrength": 0,
+    "sunStrength": 0.0,
     "sunColor": [
-     1,
+     1.0,
      0.45,
      0.25
     ],
-    "moonStrength": 0.6,
+    "moonStrength": 1.65,
     "skyZenith": [
-     0.01,
-     0.02,
-     0.07
+     0.025,
+     0.05,
+     0.14
     ],
     "skyHorizon": [
-     0.02,
-     0.035,
-     0.085
+     0.045,
+     0.075,
+     0.16
     ],
-    "skyStrength": 1,
+    "skyStrength": 1.0,
     "hazeColor": [
-     0.02,
-     0.04,
-     0.1
+     0.025,
+     0.035,
+     0.09
     ],
-    "hazeAmount": 0.4,
-    "exposure": 0.6,
-    "lamp": 1,
-    "bloom": 0.55,
-    "saturation": 1,
-    "fireflies": 1,
+    "hazeAmount": 0.36,
+    "exposure": 0.7,
+    "lamp": 1.0,
+    "bloom": 0.38,
+    "saturation": 1.0,
+    "fireflies": 1.0,
     "tint": [
-     0.85,
-     0.9,
-     1.05
+     1.0,
+     0.98,
+     1.02
     ],
-    "nightShift": 0.85
+    "nightShift": 0.8
    },
    {
     "hour": 5.5,
     "sunStrength": 0.3,
     "sunColor": [
-     1,
+     1.0,
      0.55,
      0.35
     ],
-    "moonStrength": 0.1,
+    "moonStrength": 0.0,
     "skyZenith": [
      0.2,
      0.28,
@@ -5986,8 +5992,8 @@
     "exposure": 0.8,
     "lamp": 0.3,
     "bloom": 0.3,
-    "saturation": 1,
-    "fireflies": 0,
+    "saturation": 1.0,
+    "fireflies": 0.0,
     "tint": [
      0.95,
      0.88,
@@ -5999,11 +6005,11 @@
     "hour": 6.5,
     "sunStrength": 2.6,
     "sunColor": [
-     1,
+     1.0,
      0.7,
      0.45
     ],
-    "moonStrength": 0,
+    "moonStrength": 0.0,
     "skyZenith": [
      0.3,
      0.45,
@@ -6022,26 +6028,26 @@
     ],
     "hazeAmount": 0.4,
     "exposure": 0.2,
-    "lamp": 0,
+    "lamp": 0.0,
     "bloom": 0.22,
-    "saturation": 1,
-    "fireflies": 0,
+    "saturation": 1.0,
+    "fireflies": 0.0,
     "tint": [
      1.04,
      0.98,
      0.92
     ],
-    "nightShift": 0
+    "nightShift": 0.0
    },
    {
-    "hour": 9,
+    "hour": 9.0,
     "sunStrength": 4.2,
     "sunColor": [
-     1,
+     1.0,
      0.83,
      0.62
     ],
-    "moonStrength": 0,
+    "moonStrength": 0.0,
     "skyZenith": [
      0.36,
      0.52,
@@ -6059,27 +6065,27 @@
      0.74
     ],
     "hazeAmount": 0.35,
-    "exposure": 0,
-    "lamp": 0,
+    "exposure": 0.0,
+    "lamp": 0.0,
     "bloom": 0.18,
     "saturation": 0.98,
-    "fireflies": 0,
+    "fireflies": 0.0,
     "tint": [
-     1,
-     1,
-     1
+     1.0,
+     1.0,
+     1.0
     ],
-    "nightShift": 0
+    "nightShift": 0.0
    },
    {
-    "hour": 13,
+    "hour": 13.0,
     "sunStrength": 4.8,
     "sunColor": [
-     1,
+     1.0,
      0.92,
      0.8
     ],
-    "moonStrength": 0,
+    "moonStrength": 0.0,
     "skyZenith": [
      0.34,
      0.52,
@@ -6098,26 +6104,26 @@
     ],
     "hazeAmount": 0.3,
     "exposure": -0.15,
-    "lamp": 0,
+    "lamp": 0.0,
     "bloom": 0.16,
     "saturation": 0.98,
-    "fireflies": 0,
+    "fireflies": 0.0,
     "tint": [
-     1,
-     1,
-     1
+     1.0,
+     1.0,
+     1.0
     ],
-    "nightShift": 0
+    "nightShift": 0.0
    },
    {
     "hour": 16.5,
     "sunStrength": 4.3,
     "sunColor": [
-     1,
+     1.0,
      0.82,
      0.6
     ],
-    "moonStrength": 0,
+    "moonStrength": 0.0,
     "skyZenith": [
      0.36,
      0.5,
@@ -6135,34 +6141,34 @@
      0.72
     ],
     "hazeAmount": 0.35,
-    "exposure": 0,
-    "lamp": 0,
+    "exposure": 0.0,
+    "lamp": 0.0,
     "bloom": 0.18,
     "saturation": 0.98,
-    "fireflies": 0,
+    "fireflies": 0.0,
     "tint": [
-     1,
-     1,
-     1
+     1.0,
+     1.0,
+     1.0
     ],
-    "nightShift": 0
+    "nightShift": 0.0
    },
    {
     "hour": 17.7,
     "sunStrength": 3.2,
     "sunColor": [
-     1,
+     1.0,
      0.6,
      0.32
     ],
-    "moonStrength": 0,
+    "moonStrength": 0.0,
     "skyZenith": [
      0.3,
      0.38,
      0.62
     ],
     "skyHorizon": [
-     1,
+     1.0,
      0.68,
      0.42
     ],
@@ -6174,26 +6180,26 @@
     ],
     "hazeAmount": 0.45,
     "exposure": 0.35,
-    "lamp": 0,
+    "lamp": 0.0,
     "bloom": 0.35,
     "saturation": 1.1,
-    "fireflies": 0,
+    "fireflies": 0.0,
     "tint": [
      1.06,
      0.97,
      0.86
     ],
-    "nightShift": 0
+    "nightShift": 0.0
    },
    {
     "hour": 18.5,
     "sunStrength": 0.4,
     "sunColor": [
-     1,
+     1.0,
      0.42,
      0.22
     ],
-    "moonStrength": 0,
+    "moonStrength": 0.0,
     "skyZenith": [
      0.16,
      0.18,
@@ -6215,31 +6221,31 @@
     "lamp": 0.4,
     "bloom": 0.4,
     "saturation": 1.05,
-    "fireflies": 0,
+    "fireflies": 0.0,
     "tint": [
      0.95,
      0.85,
      0.9
     ],
-    "nightShift": 0
+    "nightShift": 0.0
    },
    {
     "hour": 19.3,
-    "sunStrength": 0,
+    "sunStrength": 0.0,
     "sunColor": [
-     1,
+     1.0,
      0.42,
      0.22
     ],
-    "moonStrength": 0.4,
+    "moonStrength": 0.8,
     "skyZenith": [
-     0.04,
-     0.07,
-     0.2
+     0.065,
+     0.09,
+     0.22
     ],
     "skyHorizon": [
-     0.2,
-     0.18,
+     0.22,
+     0.19,
      0.32
     ],
     "skyStrength": 0.9,
@@ -6255,49 +6261,49 @@
     "saturation": 0.9,
     "fireflies": 0.6,
     "tint": [
-     0.85,
-     0.88,
-     1.04
+     0.98,
+     0.95,
+     1.02
     ],
-    "nightShift": 0.5
+    "nightShift": 0.42
    },
    {
     "hour": 20.5,
-    "sunStrength": 0,
+    "sunStrength": 0.0,
     "sunColor": [
-     1,
+     1.0,
      0.45,
      0.25
     ],
-    "moonStrength": 0.6,
+    "moonStrength": 1.65,
     "skyZenith": [
-     0.01,
-     0.02,
-     0.07
+     0.025,
+     0.05,
+     0.14
     ],
     "skyHorizon": [
-     0.02,
-     0.035,
-     0.085
+     0.045,
+     0.075,
+     0.16
     ],
-    "skyStrength": 1,
+    "skyStrength": 1.0,
     "hazeColor": [
-     0.02,
-     0.04,
-     0.1
+     0.025,
+     0.035,
+     0.09
     ],
-    "hazeAmount": 0.4,
-    "exposure": 0.6,
-    "lamp": 1,
-    "bloom": 0.55,
-    "saturation": 1,
-    "fireflies": 1,
+    "hazeAmount": 0.36,
+    "exposure": 0.7,
+    "lamp": 1.0,
+    "bloom": 0.38,
+    "saturation": 1.0,
+    "fireflies": 1.0,
     "tint": [
-     0.85,
-     0.9,
-     1.05
+     1.0,
+     0.98,
+     1.02
     ],
-    "nightShift": 0.85
+    "nightShift": 0.8
    }
   ]
  },
@@ -6352,12 +6358,13 @@
   }
  },
  "files": {
-  "scene.glb": 4551960,
-  "terrain_sky.png": 611012,
-  "terrain_bounce.png": 146354,
-  "terrain_lamp.png": 26683,
-  "terrain_zenith.png": 129534,
-  "ground_albedo.png": 94142,
-  "grass.png": 407139
+  "scene.glb": 4575624,
+  "terrain_sky.png": 611014,
+  "terrain_bounce.png": 146356,
+  "terrain_lamp.png": 35552,
+  "terrain_zenith.png": 129536,
+  "ground_albedo.png": 94145,
+  "grass.png": 407139,
+  "ground_cover.png": 15517
  }
 }

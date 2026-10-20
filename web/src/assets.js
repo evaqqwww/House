@@ -1,6 +1,7 @@
 // Loads the asset set (manifest.json version 2) with byte progress: scene.glb (meshopt), the terrain light layers
 // (terrain_sky / terrain_bounce / terrain_lamp / terrain_zenith, data), ground_albedo (sRGB) and grass.png (density +
-// height, read on the CPU and uploaded as a density texture). PNGs are decoded by src/png.js, so data stays bit exact.
+// height, read on the CPU and uploaded as a density texture). ground_cover.png keeps surface coverage separate
+// from canopy-thinned blade density. PNGs are decoded by src/png.js, so data stays bit exact.
 import {
   DataTexture,
   LinearFilter,
@@ -78,21 +79,23 @@ export async function loadAssets(base, onProgress, maxAnisotropy = 4) {
   if (!mres.ok) throw new Error(`manifest.json: HTTP ${mres.status}`);
   const manifest = await mres.json();
   if (manifest.version !== 2) throw new Error(`manifest.json version ${manifest.version}: this viewer needs asset contract version 2`);
+  // The surface map is additive to v2; older exports retain their original density-based response.
+  const files = manifest.files['ground_cover.png'] ? [...FILES, 'ground_cover.png'] : FILES;
 
   const expected = {};
-  for (const f of FILES) expected[f] = Number(manifest.files[f]) || 1;
+  for (const f of files) expected[f] = Number(manifest.files[f]) || 1;
   const total = Object.values(expected).reduce((a, b) => a + b, 0);
-  const got = Object.fromEntries(FILES.map((f) => [f, 0]));
+  const got = Object.fromEntries(files.map((f) => [f, 0]));
   const report = () => {
-    const sum = FILES.reduce((a, f) => a + Math.min(got[f], expected[f]), 0);
+    const sum = files.reduce((a, f) => a + Math.min(got[f], expected[f]), 0);
     onProgress(0.85 * (sum / total), `下载 ${(sum / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`);
   };
   const bump = (file) => (n) => {
     got[file] += n;
     report();
   };
-  const buffers = await Promise.all(FILES.map((f) => fetchWithProgress(base + f, bump(f))));
-  const byName = Object.fromEntries(FILES.map((f, i) => [f, buffers[i]]));
+  const buffers = await Promise.all(files.map((f) => fetchWithProgress(base + f, bump(f))));
+  const byName = Object.fromEntries(files.map((f, i) => [f, buffers[i]]));
 
   onProgress(0.88, '解析场景');
   await MeshoptDecoder.ready;
@@ -106,6 +109,7 @@ export async function loadAssets(base, onProgress, maxAnisotropy = 4) {
     decodePNG(byName['grass.png']),
   ]);
   if (grassImg.channels < 3) throw new Error('grass.png must be RGB (R density, G/B height)');
+  const coverImg = byName['ground_cover.png'] ? await decodePNG(byName['ground_cover.png']) : grassImg;
 
   onProgress(0.94, '准备贴图');
   const aniso = Math.min(maxAnisotropy, 4);
@@ -115,6 +119,7 @@ export async function loadAssets(base, onProgress, maxAnisotropy = 4) {
     lamp: dataTexture(lampImg, 'terrain_lamp', { red: true }),
     albedo: dataTexture(albedoImg, 'ground_albedo', { srgb: true, anisotropy: aniso }),
     density: dataTexture(grassImg, 'grass_density', { red: true, anisotropy: aniso }),
+    cover: dataTexture(coverImg, 'ground_cover', { red: true, anisotropy: aniso }),
     zenith: dataTexture(zenithImg, 'terrain_zenith', { red: true }),
   };
   // CPU copies for the grass generator: density (R) and the 16-bit height (G * 256 + B)

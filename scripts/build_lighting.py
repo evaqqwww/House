@@ -5,6 +5,7 @@ import bpy
 from mathutils import Vector
 
 import common
+import build_house
 import timeofday
 
 # The default hour of timeofday.json; timeofday.apply(hour) moves every time-dependent setting below.
@@ -65,11 +66,38 @@ def _lantern_light(coll):
         return None
     data = bpy.data.lights.new("LanternLight", "POINT")
     data.energy = 0.0
-    data.shadow_soft_size = 0.08
+    data.shadow_soft_size = TOD["lamps"]["pointRadius"]
     light = bpy.data.objects.new("LanternLight", data)
     light.location = loc - Vector((0.0, 0.0, 0.2))     # just below the glass, which would block it
     coll.objects.link(light)
     return light
+
+
+def _window_lights(coll):
+    """Soft outward spill, separate from the visible glass so the panes keep their colour."""
+    house = common.house_matrix()
+    windows = [(side, build_house.wall_frame(sd), w)
+               for side, sd in build_house.SIDES.items() for w in sd["windows"]]
+    # The dormer relies on glass emission; an external area would wash the adjacent roof.
+    for index, (side, frame, w) in enumerate(windows):
+        width, height = w["a1"] - w["a0"], w["z1"] - w["z0"]
+        center_z = (w["z0"] + w["z1"]) / 2
+        world = house @ frame
+        # Even the tilted source's inner edge clears the sill/shutters, which reach 0.22 m.
+        location = world @ Vector(((w["a0"] + w["a1"]) / 2, center_z, 0.38))
+        outward = world.to_3x3() @ Vector((0, 0, 1))
+        data = bpy.data.lights.new(f"WindowSpill_{side}_{index}", "AREA")
+        data.shape = "RECTANGLE"
+        data.size, data.size_y = width * 1.6, height * 1.3
+        data.energy = 0.0
+        light = bpy.data.objects.new(data.name, data)
+        light.location = location
+        # Power follows the aperture, not the larger emitter: broad, low-luminance spill.
+        light["window_spill_area"] = width * height
+        # Attic light grazes nearby roofs; keep those pools subtler than the lower walls.
+        light["window_spill_multiplier"] = 0.2 if center_z > build_house.WALL_TOP else 1.0
+        common.look_at(light, location + outward - Vector((0, 0, 0.2)))
+        coll.objects.link(light)
 
 
 def _world(sc):
@@ -257,38 +285,86 @@ def _compositor(sc):
     ln.new(scene.outputs["Result"], haze.inputs["A"])
     ln.new(haze_col.outputs["Result"], haze.inputs["B"])
 
-    # night grade: dark areas move toward lum * night colour, lamp-lit areas keep their colour
+    # Night tint retains the source chroma and luminance; warm spill stays protected even in shadow.
     night = TOD["nightGrade"]
-    lum = n.new("CompositorNodeRGBToBW")
-    lum.location = (-400, -450)
-    ln.new(haze.outputs["Result"], lum.inputs["Image"])
+    rgb = n.new("CompositorNodeSeparateColor")
+    rgb.mode = "RGB"
+    rgb.location = (-850, -550)
+    ln.new(haze.outputs["Result"], rgb.inputs["Image"])
+
+    def scalar(operation, a, b, location):
+        node = n.new("ShaderNodeMath")
+        node.operation = operation
+        node.location = location
+        for index, value in enumerate((a, b)):
+            if isinstance(value, (int, float)):
+                node.inputs[index].default_value = value
+            else:
+                ln.new(value, node.inputs[index])
+        return node.outputs["Value"]
+
+    # Explicit scene-linear Rec.709 luminance matches the web look regardless of colour-management settings.
+    def luminance(channels, location):
+        x, y = location
+        red = scalar("MULTIPLY", channels.outputs["Red"], 0.2126, (x, y))
+        green = scalar("MULTIPLY", channels.outputs["Green"], 0.7152, (x, y - 150))
+        blue = scalar("MULTIPLY", channels.outputs["Blue"], 0.0722, (x, y - 300))
+        rg = scalar("ADD", red, green, (x + 150, y))
+        return scalar("ADD", rg, blue, (x + 300, y))
+
+    lum = luminance(rgb, (-700, -450))
     dark = n.new("ShaderNodeMapRange")
+    dark.name = "NightDarkRange"
     dark.location = (-250, -450)
     dark.interpolation_type = "SMOOTHSTEP"
     dark.inputs["From Min"].default_value = night["low"]
     dark.inputs["From Max"].default_value = night["high"]
     dark.inputs["To Min"].default_value = 1.0
     dark.inputs["To Max"].default_value = 0.0
-    ln.new(lum.outputs["Val"], dark.inputs["Value"])
+    ln.new(lum, dark.inputs["Value"])
+    cool_channel = scalar("MAXIMUM", rgb.outputs["Green"], rgb.outputs["Blue"], (-700, -900))
+    difference = scalar("SUBTRACT", rgb.outputs["Red"], cool_channel, (-550, -800))
+    safe_lum = scalar("MAXIMUM", lum, 1e-5, (-400, -650))
+    warmth = scalar("DIVIDE", difference, safe_lum, (-250, -650))
+    cool = n.new("ShaderNodeMapRange")
+    cool.name = "NightWarmthRange"
+    cool.location = (-100, -650)
+    cool.interpolation_type = "SMOOTHSTEP"
+    cool.inputs["From Min"].default_value = night["warmth"][0]
+    cool.inputs["From Max"].default_value = night["warmth"][1]
+    cool.inputs["To Min"].default_value = 1.0
+    cool.inputs["To Max"].default_value = 0.0
+    ln.new(warmth, cool.inputs["Value"])
+    protected = scalar("MULTIPLY", dark.outputs["Result"], cool.outputs["Result"], (50, -550))
     shift = n.new("ShaderNodeMath")
     shift.name = "NightShift"
-    shift.location = (-100, -450)
+    shift.location = (200, -450)
     shift.operation = "MULTIPLY"
     shift.inputs[1].default_value = 0.0
-    ln.new(dark.outputs["Result"], shift.inputs[0])
+    ln.new(protected, shift.inputs[0])
     scot = n.new("ShaderNodeMix")
+    scot.name = "NightColor"
     scot.location = (-250, -250)
     scot.data_type = "RGBA"
     scot.blend_type = "MULTIPLY"
     scot.inputs["Factor"].default_value = 1.0
     scot.inputs["B"].default_value = (*night["color"], 1.0)
-    ln.new(lum.outputs["Val"], scot.inputs["A"])
+    ln.new(haze.outputs["Result"], scot.inputs["A"])
+    night_rgb = n.new("CompositorNodeSeparateColor")
+    night_rgb.mode = "RGB"
+    night_rgb.location = (-850, -1100)
+    ln.new(scot.outputs["Result"], night_rgb.inputs["Image"])
+    night_lum = luminance(night_rgb, (-700, -1100))
+    safe_night_lum = scalar("MAXIMUM", night_lum, 1e-5, (-250, -1250))
+    night_scale = scalar("DIVIDE", lum, safe_night_lum, (-100, -1100))
+    normalized = mix("MULTIPLY", scot.outputs["Result"], night_scale, (50, -1000))
+    normalized.name = "NightNormalized"
     graded = n.new("ShaderNodeMix")
     graded.location = (-100, -150)
     graded.data_type = "RGBA"
     ln.new(shift.outputs["Value"], graded.inputs["Factor"])
     ln.new(haze.outputs["Result"], graded.inputs["A"])
-    ln.new(scot.outputs["Result"], graded.inputs["B"])
+    ln.new(normalized.outputs["Result"], graded.inputs["B"])
 
     tint = n.new("ShaderNodeMix")
     tint.name = "Tint"
@@ -356,6 +432,7 @@ def build(samples=256):
     _sun(coll)
     _moon(coll)
     _lantern_light(coll)
+    _window_lights(coll)
     _world(sc)
     cams = {name: _camera(coll, name, cfg) for name, cfg in CAMERAS.items()}
     sc.camera = cams["CAM_Overview"]

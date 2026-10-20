@@ -9,7 +9,7 @@
 //                                            / sin(el_default): the light a flat ground gets, relative to the bake's
 //   lamps    lamp(t) * lampColor * Lp
 // The shadow map belongs to the stronger of sun and moon (the key light); the other one is unshadowed.
-import { Color, Matrix4, Vector2, Vector3, Vector4 } from 'three';
+import { Color, MathUtils, Matrix4, Vector2, Vector3, Vector4 } from 'three';
 import { createTimeOfDay, directionFromAngles } from './timeofday.js';
 
 const LUMA = [0.2126, 0.7152, 0.0722];
@@ -54,6 +54,7 @@ export function createLighting(manifest) {
     uSkyCurve: { value: model.skyDome.curve }, // dome gradient: horizon -> zenith by t^curve
     uSkyRange: { value: new Vector2().fromArray(SKY_RANGE) },
     uNight: { value: 0 },
+    uGroundNight: { value: 0 },
     uFireflies: { value: 0 },
     uShadowMap: { value: null },
     uShadowMatrix: { value: new Matrix4() },
@@ -76,10 +77,9 @@ export function createLighting(manifest) {
 
   function setHour(hour) {
     const s = tod.state(hour);
-    const up = s.sunElevation > 0;
-    // Blender aims the sun at max(elevation, 0.5 deg) and switches it off below the horizon
+    // Match Blender's horizon fade, keeping direct light, bounce and key selection in sync.
     const sunDir = U.uSunDir.value.fromArray(directionFromAngles(s.sunAzimuth, Math.max(s.sunElevation, 0.5), tmp));
-    const sunStrength = up ? s.sunStrength : 0;
+    const sunStrength = s.sunStrength * MathUtils.smoothstep(s.sunElevation, 0, 1.5);
     U.uSunRad.value.fromArray(s.sunColor).multiplyScalar(sunStrength / Math.PI);
     U.uMoonRad.value.fromArray(moon.color).multiplyScalar((s.moonStrength * DEFAULTS.moonGain) / Math.PI);
 
@@ -126,6 +126,8 @@ export function createLighting(manifest) {
 
     const el = s.sunElevation;
     U.uNight.value = Math.min(Math.max((-el - 3) / 12, 0), 1);
+    // The ground settles into its night response before moonlight grows strong; canopies keep their own fade.
+    U.uGroundNight.value = 1 - MathUtils.smoothstep(el, -3, 6);
     U.uFireflies.value = s.fireflies;
 
     state.hour = s.hour;

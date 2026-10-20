@@ -3,7 +3,8 @@
 //   kernel) -> EffectPass( MiniatureDof composite, Look ) -> screen (sRGB)
 // The grade is the Blender compositor in its order: + bloom -> haze (depth: quadratic from start over depth, capped at
 // hazeAmount) -> night grade (lum = Rec.709 luminance, dark = 1 - smoothstep(low, high, lum),
-// c = mix(c, lum * nightColor, nightShift * dark)) -> * tint -> saturation -> exposure 2^EV; the sky dome skips all of
+// chromatic night tint (normalized to preserve luminance), blended by nightShift * dark * (1 - warm),
+// then * tint -> saturation -> exposure 2^EV; the sky dome skips all of
 // it but the bloom. Scene and sky mix by the frame's alpha (the sky dome writes 0, everything else 1, transparent
 // objects their coverage; the multisample resolve turns it into the coverage at edges). Look then applies the vignette
 // 0.22 and Blender's view transform (AgX, look 'AgX - Base Contrast', viewlut.js). With depth of field the grade runs
@@ -198,6 +199,7 @@ uniform vec3 hazeParams; // start, depth, amount
 uniform vec2 tanHalfFov; // tan of the half field of view, x and y
 uniform vec3 nightColor;
 uniform vec2 nightRange;
+uniform vec2 nightWarmth;
 uniform float nightShift;
 uniform vec3 tint;
 uniform float saturation;
@@ -211,10 +213,15 @@ vec3 grade( vec3 c, const in vec2 uv, const in float dist, const in float w ) {
   // haze (Blender mist, quadratic)
   float m = clamp( ( dist - hazeParams.x ) / hazeParams.y, 0.0, 1.0 );
   vec3 s = mix( c, hazeColor, hazeParams.z * m * m );
-  // night grade: dark areas toward lum * nightColor, lamp-lit areas keep their colour
+  // Protect amber spill by chroma as well as brightness: dim warm light should stay warm, too.
   float lum = dot( s, vec3( 0.2126, 0.7152, 0.0722 ) );
   float dark = 1.0 - smoothstep( nightRange.x, nightRange.y, lum );
-  s = mix( s, lum * nightColor, nightShift * dark );
+  float warm = smoothstep( nightWarmth.x, nightWarmth.y, ( s.r - max( s.g, s.b ) ) / max( lum, 1e-5 ) );
+  // Tint the existing material colour instead of replacing it with a grey-derived blue.
+  // Meadow greens and brown paths survive, while moonlit foliage still catches the blue tint.
+  vec3 night = s * nightColor;
+  night *= lum / max( dot( night, vec3( 0.2126, 0.7152, 0.0722 ) ), 1e-5 );
+  s = mix( s, night, nightShift * dark * ( 1.0 - warm ) );
   s *= tint;
   // HSV saturation scale (hue and value kept), as Blender's Hue/Saturation node
   float v = max( s.r, max( s.g, s.b ) );
@@ -539,6 +546,7 @@ export function createPost(renderer, scene, camera, lighting, manifest, tier, vi
     ['tanHalfFov', new Uniform(new Vector2(1, 1))],
     ['nightColor', new Uniform(new Vector3().fromArray(ng.color))],
     ['nightRange', new Uniform(new Vector2(ng.low, ng.high))],
+    ['nightWarmth', new Uniform(new Vector2().fromArray(ng.warmth ?? [0.12, 0.65]))],
     ['nightShift', new Uniform(0)],
     ['tint', new Uniform(new Vector3(1, 1, 1))],
     ['saturation', new Uniform(1)],

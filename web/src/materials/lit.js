@@ -9,10 +9,13 @@ import { Color, DoubleSide, FrontSide, ShaderMaterial } from 'three';
 import { LIGHT_PARS, SHADOW_PARS } from '../shaderlib.js';
 
 const SPECULAR = 0.018; // ks: Cycles glossy / diffuse light of the house surfaces (rocks ~0.012)
+const NIGHT_COOL = [1.1, 0.8, 0.7]; // keep solid surfaces in quieter blue-violet mids beneath the blue leaf highlights
 
 const vertexShader = /* glsl */ `
 ${LIGHT_PARS}
 ${SHADOW_PARS}
+uniform float uNight;
+uniform vec3 uLitNightCool;
 attribute vec4 aSky;
 attribute vec4 aBounce; // sqrt(B / bounceScale) rgb, zenith fraction Z (linear) a
 varying vec3 vAlbedo;
@@ -22,11 +25,13 @@ varying vec3 vShadow;
 void main() {
   vec4 wp = modelMatrix * vec4( position, 1.0 );
   vec3 n = normalize( mat3( modelMatrix ) * normal );
-  vKey = keyRad() * max( dot( n, keyDir() ), 0.0 );
+  vec3 coolTone = mix( vec3( 1.0 ), uLitNightCool, uNight );
+  vKey = keyRad() * max( dot( n, keyDir() ), 0.0 ) * coolTone;
   vec3 S = decodeSky( aSky.rgb );
   vec3 B = decodeBounce( aBounce.rgb );
   float Lp = decodeLamp( aSky.a );
-  vFill = fillRad() * max( dot( n, fillDir() ), 0.0 ) + bakedLight( S, B, Lp, aBounce.a );
+  vec3 cool = fillRad() * max( dot( n, fillDir() ), 0.0 ) + skyLight( aBounce.a ) * S + uBounceRad * B;
+  vFill = cool * coolTone + uLampRad * Lp;
   vAlbedo = color.rgb;
   vShadow = shadowCoord( wp.xyz, n );
   gl_Position = projectionMatrix * viewMatrix * wp;
@@ -56,7 +61,12 @@ export function createLitMaterial(lighting, emission = null, name = 'Lit') {
     vertexColors: true,
     // the emitters are tiny and seen through the lantern frame from any side
     side: emission ? DoubleSide : FrontSide,
-    uniforms: { ...lighting.U, uEmission: emission || { value: new Color(0, 0, 0) }, uSpecular: { value: SPECULAR } },
+    uniforms: {
+      ...lighting.U,
+      uEmission: emission || { value: new Color(0, 0, 0) },
+      uSpecular: { value: SPECULAR },
+      uLitNightCool: { value: new Color().fromArray(NIGHT_COOL) },
+    },
     vertexShader,
     fragmentShader,
   });

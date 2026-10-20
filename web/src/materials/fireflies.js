@@ -4,7 +4,7 @@ import { AdditiveBlending, BufferGeometry, InterleavedBuffer, InterleavedBufferA
 import { mulberry32 } from './grass.js';
 
 const RADIUS = 26; // metres around the house
-const RADIANCE = 9; // HDR brightness of a firefly's core
+const RADIANCE = 4.5; // small warm accents below the cottage lights and moonlit leaves
 
 /** Meadow spots (grass density > 0.35) within `radius` of `center`, at 0.3 - 1.8 m above the ground. */
 function positions(grassMap, manifest, count, center, radius, seed = 11) {

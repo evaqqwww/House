@@ -114,7 +114,9 @@ float vnoise( vec2 p ) {
 // reaches only the top of the grass: seen at a grazing angle the meadow shows those sky-lit tops, seen from above
 // the darker depths between the blades (meadowSkyView, 1 at 45 degrees). The moon and the lantern light the grass
 // from the side or at a grazing angle and read dimmer than the sun behind the preset cameras (uMeadowNight).
+// At night, separate cool illumination from amber spill so neither turns the ground into a luminous carpet.
 export const GRASS_COLOR = /* glsl */ `
+uniform float uGroundNight;
 uniform vec3 uGrassRoot;
 uniform vec3 uGrassTip;
 uniform vec2 uGrassMix; // rootMix, tipMix
@@ -122,6 +124,12 @@ uniform vec3 uMeadowTone;
 uniform vec3 uMeadowSky;
 uniform float uMeadowSkyView; // gain of the sky light per unit of (cos 45 deg - cos view angle)
 uniform float uMeadowNight; // gain of the moonlight and the lamp light on the grass
+uniform float uMeadowNightCool; // night-only gain of moon, sky and bounce on the ground
+uniform vec3 uMeadowNightTint; // ink-green response of the cold branch; lamps are independent
+uniform vec3 uMeadowLampTone; // compensate the meadow's green scattering under amber lamps
+vec3 meadowCoolGain() { return mix( vec3( 1.0 ), uMeadowNightCool * uMeadowNightTint, uGroundNight ); }
+// Amber response is a material property: only lamp strength fades, never a second time-dependent gain.
+vec3 meadowLampGain() { return uMeadowNight * uMeadowLampTone; }
 // gains of the key and fill light on the grass: the moon (whichever it is) gets uMeadowNight
 vec2 meadowDirect() {
   return uKeyShadow.x > 0.5 ? vec2( 1.0, uMeadowNight ) : vec2( uMeadowNight, 1.0 );

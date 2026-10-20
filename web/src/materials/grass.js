@@ -38,6 +38,9 @@ export const GRASS_DEFAULTS = {
   meadowSky: [0.34, 0.32, 0.52],
   meadowSkyView: 1.0,
   meadowNight: 0.85,
+  meadowNightCool: 0.22, // keep the green-blue ground below the moonlit canopies
+  meadowNightTint: [0.55, 0.68, 0.95], // ink-green moonlit grass with restrained blue reflections
+  meadowLampTone: [0.39, 0.252, 0.32], // muted warm-green spill, below the doorway and luminous windows
   // the root -> tip gradient (and darker roots) of a blade average 1 / 1.46 of the carpet colour at its blade-height
   // position: blades are brightened by this, so they add texture but not darkness and every blade count looks alike
   bladeGain: 1.46,
@@ -219,12 +222,13 @@ void main() {
   vec2 dk = meadowDirect();
   vec3 key = keyRad() * bladeDirect( kd ) * sh * dk.x;
   vec3 fill = fillRad() * bladeDirect( fillDir() ) * dk.y;
-  vec3 light = key + fill + meadowSkyView( normalize( cameraPosition - root ).y ) * ( skyLight( Z ) * S + uBounceRad * B ) + uLampRad * Lp * uMeadowNight;
+  vec3 cool = key + fill + meadowSkyView( normalize( cameraPosition - root ).y ) * ( skyLight( Z ) * S + uBounceRad * B );
+  vec3 light = cool * meadowCoolGain() + uLampRad * Lp * meadowLampGain();
   float ao = mix( uGrassOcclusion, 1.0, smoothstep( 0.0, 0.85, t ) );
   // light through the blades when looking toward the key light
   vec3 view = normalize( root - cameraPosition );
   float back = pow( max( dot( view, kd ), 0.0 ), 2.0 );
-  vec3 trans = uTranslucent.a * uTranslucent.rgb * keyRad() * sh * ( 0.3 + 2.0 * back ) * t;
+  vec3 trans = uTranslucent.a * uTranslucent.rgb * keyRad() * sh * ( 0.3 + 2.0 * back ) * t * meadowCoolGain();
   vColor = col * light * ao * uBladeGain + trans;
 
   gl_Position = projectionMatrix * viewMatrix * vec4( root + p, 1.0 );
