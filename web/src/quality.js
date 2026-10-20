@@ -3,7 +3,7 @@
 export const TIERS = {
   low: {
     key: 'low',
-    grass: 25000, fireflies: 120, lodScale: 1.2, treeBudget: 60000, cardBudget: 10000, wind: false,
+    grass: 25000, fireflies: 120, lodScale: 1.2, treeBudget: 70000, wind: false,
     shadow: 1024, shadowTaps: 1,
     dof: false, dofScale: 0.5, dofSamples: 12,
     bloomScale: 0.25,
@@ -11,7 +11,7 @@ export const TIERS = {
   },
   medium: {
     key: 'medium',
-    grass: 60000, fireflies: 250, lodScale: 2, treeBudget: 70000, cardBudget: 20000, wind: true,
+    grass: 60000, fireflies: 250, lodScale: 2, treeBudget: 170000, wind: true,
     shadow: 2048, shadowTaps: 4,
     dof: true, dofScale: 0.5, dofSamples: 20,
     bloomScale: 0.5,
@@ -20,7 +20,7 @@ export const TIERS = {
   },
   high: {
     key: 'high',
-    grass: 200000, fireflies: 400, lodScale: 2.5, treeBudget: 180000, cardBudget: 40000, wind: true,
+    grass: 200000, fireflies: 400, lodScale: 2.5, treeBudget: 450000, wind: true,
     shadow: 4096, shadowTaps: 16,
     dof: true, dofScale: 0.5, dofSamples: 40,
     bloomScale: 0.5,

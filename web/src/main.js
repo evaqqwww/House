@@ -271,7 +271,6 @@ async function main() {
       shadowTriangles: shadows.state.info.triangles,
       shadowCpuMs: shadows.state.lastCpuMs,
       treeLods: forest.state.counts,
-      cards: forest.state.cards,
       textureBytes: assetTextureBytes + targetBytes,
       targetBytes,
       gpuMs: gpuTimer.ms,

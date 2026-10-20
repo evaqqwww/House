@@ -9,9 +9,9 @@ the creases between clumps and inside). Each variant is copied into colour tints
 linked duplicates of those meshes. Bushes sit in small groups under the canopy rim of the forest-edge
 trees and on the far shore of the pond.
 
-build_lod_meshes() makes the web viewer's meshes of every variant and tint from the same canopy field and trunk
-skeleton: three levels of detail <variant>_L0/_L1/_L2 whose canopies are camera-facing leaf-cluster cards over a
-dark core (see CARD_SPECS), and the shadow caster <variant>_Shadow; build() does not use them.
+build_lod_meshes() makes the light level-of-detail meshes of every variant and tint for the web viewer
+(<variant>_L0/_L1/_L2, see LOD_SPECS) from the same canopy field and trunk skeleton; build() does not use
+them.
 """
 import math
 
@@ -179,13 +179,13 @@ class Canopy:
         n = _normalize((e[..., None] * g).sum(1))
         return s, n
 
-    def crease(self, p, width=0.35):
-        """1 in the valleys where two clumps meet, 0 on a clump's open surface (`width` metres away)."""
+    def crease(self, p):
+        """1 in the valleys where two clumps meet, 0 on a clump's open surface."""
         d, _ = self._dist(p)
         if d.shape[1] < 2:
             return np.zeros(len(p))
         d2 = np.sort(d, axis=1)
-        return np.exp(-np.abs(d2[:, 1] - d2[:, 0]) / width)
+        return np.exp(-np.abs(d2[:, 1] - d2[:, 0]) / 0.35)
 
     def level(self, p):
         return sum(a * lm(p) for lm, a in self.octaves)
@@ -229,10 +229,9 @@ class Canopy:
 # ---------------------------------------------------------------- geometry parts
 class Part:
     """Raw geometry: verts (N,3), faces (list of index tuples), per-face material, per-vertex normal,
-    and either a gradient value t (leaves, tinted later) or a fixed colour (bark). Leaf cards also carry a
-    per-vertex atlas UV (N,2) and card data (N,4)."""
+    and either a gradient value t (leaves, tinted later) or a fixed colour (bark)."""
 
-    def __init__(self, verts, faces, mat, normals, t=None, cols=None, uv=None, card=None):
+    def __init__(self, verts, faces, mat, normals, t=None, cols=None):
         self.verts = np.asarray(verts, float)
         self.faces = faces
         self.mat = mat
@@ -240,8 +239,6 @@ class Part:
         n = len(self.verts)
         self.t = np.full(n, np.nan) if t is None else np.asarray(t, float)
         self.cols = np.zeros((n, 4)) if cols is None else np.asarray(cols, float)
-        self.uv = np.zeros((n, 2)) if uv is None else np.asarray(uv, float)
-        self.card = np.zeros((n, 4)) if card is None else np.asarray(card, float)
 
 
 def _leaf_shell(canopy, leaf_len, nrng, max_leaves, mat=1):
@@ -449,9 +446,7 @@ def _merge(parts):
             np.concatenate(ts), np.concatenate(cols))
 
 
-def _new_mesh(name, data, materials, tint, free_normals=False):
-    """Mesh with per-vertex normals and the 'Col' tint. free_normals stores the normals as plain vectors (the
-    'custom_normal' point attribute) instead of corner normal spaces, which zero-area faces (cards) do not have."""
+def _new_mesh(name, data, materials, tint):
     old = bpy.data.meshes.get(name)
     if old is not None and old.users == 0:
         bpy.data.meshes.remove(old)
@@ -463,11 +458,7 @@ def _new_mesh(name, data, materials, tint, free_normals=False):
         me.materials.append(m)
     me.polygons.foreach_set("material_index", mats)
     me.shade_smooth()
-    if free_normals:
-        attr = me.attributes.new("custom_normal", "FLOAT_VECTOR", "POINT")
-        attr.data.foreach_set("vector", _normalize(normals).astype(np.float32).ravel())
-    else:
-        me.normals_split_custom_set_from_vertices(normals.tolist())
+    me.normals_split_custom_set_from_vertices(normals.tolist())
     attr = me.color_attributes.new("Col", "FLOAT_COLOR", "CORNER")
     me.color_attributes.active_color = attr
     me.color_attributes.render_color_index = me.color_attributes.active_color_index
@@ -513,58 +504,36 @@ def build_variant_meshes(mat_bark, mat_leaves):
 
 
 # ---------------------------------------------------------------- level-of-detail meshes (web viewer)
-# Light meshes of every variant for real-time display, from the same canopy field (blobs, lumps), canopy normals,
-# colour gradient and trunk skeleton as the full variant; the Blender scene itself keeps the full meshes.
-# <variant>_L0 / _L1 / _L2 have one part per material:
-#   M_Bark       trunk (L0 with branches) with fewer rings and sides
-#   M_LeafCore   opaque low-poly hull inside the card layer in the dark inner canopy colour: gaps between the cards
-#                show depth, never sky
-#   M_LeafCards  leaf-cluster cards textured from the leaf atlas (textures/leaf_clusters.png: ATLAS_CELLS cells, one
-#                cluster per cell with its base at the bottom centre), turned to the camera by the viewer's vertex
-#                shader. A card shows the centred square of its cell (ATLAS_CROP of the cell side) that holds the
-#                cluster. Four vertices per card, all at the card centre: normal = canopy normal there, 'Col' = gradient
-#                tint (cluster base darker than the tips), UV = the atlas corner (random cell and horizontal mirror;
-#                v = 1 - atlas row / atlas height, which the glTF exporter writes as v = 0 at the top row of the atlas),
-#                '_CARD' = (corner x, corner y with +1 toward the leaf tips, half size in metres, roll jitter in
-#                radians). The outer layer of cards is spread evenly over the visible canopy surface with the card
-#                centres just under it; a sparser inner layer sits deeper and comes out darker.
-# <variant>_Shadow casts the shadows: a lobed hull with one-triangle leaves over it (M_Bark + M_Leaves, SHADOW_SPEC).
-#   tree / bush    cards per tree / bush
-#   coverage       opaque card area (ATLAS_FILL of the card) of the outer layer / visible canopy area
-#   inner          share of the cards in the inner layer
-#   sink           card centres of the outer layer below the lumpy surface, in half sizes (the clusters reach out of
-#                  the surface by the rest); the inner layer sits INNER_SINK half sizes deeper
-#   core           geodesic frequency of the core of a tree / bush (20 f^2 triangles); core_depth = core below the
-#                  surface in mean half sizes (at most CORE_MAX_DEPTH of the smallest radius of the main blob);
-#                  core_tint = gradient offset of the core
+# Light meshes of every variant for real-time display: a closed hull wrapped onto the lumpy canopy surface
+# (slightly inside it) carries the soft volume shading, fewer and larger leaves over it break the silhouette,
+# and a trunk with fewer sides. Same canopy field (blobs, lumps), canopy normals, colour gradient and trunk
+# skeleton as the full variant. The Blender scene itself keeps the full meshes.
+#   tree / bush    triangle budget
+#   hull_type      'radial' (one geodesic sphere wrapped from the canopy centre) or 'blobs' (one per blob)
+#   hull           geodesic frequency (20 f^2 triangles per sphere); depth = hull offset inside the surface (m)
+#   coverage       leaf area / visible canopy area (the full variant has 2.1 plus an inner layer)
+#   leaf           'diamond' (2 triangles, folded along the midrib) or 'tri' (1 triangle, tip outwards)
+#   tilt           max lift of the leaf tips off the surface (rad; the full variant has 0.67)
 #   rings / sides  trunk rings and sides; branches = sides of the branches (0 = none); top = how far the trunk
 #                  reaches from the canopy bottom to the trunk top
-CARD_SPECS = (
-    dict(tree=300, bush=70, coverage=1.0, inner=0.15, sink=0.55, core=(3, 2), core_depth=1.5, core_tint=0.1,
-         rings=7, sides=6, branches=4, top=1.0),
-    dict(tree=110, bush=30, coverage=0.9, inner=0.1, sink=0.62, core=(3, 2), core_depth=1.25, core_tint=0.12,
-         rings=4, sides=5, branches=0, top=0.55),
-    dict(tree=40, bush=12, coverage=0.75, inner=0.0, sink=0.7, core=(2, 2), core_depth=0.8, core_tint=0.16,
-         rings=3, sides=4, branches=0, top=0.25),
+LOD_SPECS = (
+    dict(tree=3000, bush=1200, hull_type="radial", hull=4, hull_bush=3, depth=0.3, coverage=1.35,
+         leaf="diamond", tilt=0.4, rings=7, sides=6, branches=4, top=1.0),
+    dict(tree=1000, bush=400, hull_type="radial", hull=3, hull_bush=2, depth=0.22, coverage=1.2,
+         leaf="diamond", tilt=0.3, rings=4, sides=5, branches=0, top=0.55),
+    dict(tree=300, bush=120, hull_type="blobs", hull=1, hull_bush=1, depth=0.12, coverage=0.6,
+         leaf="tri", tilt=0.2, rings=3, sides=4, branches=0, top=0.25),
 )
-ATLAS_CELLS = (2, 2)               # columns, rows
-ATLAS_CROP = 0.727                 # side of the centred square of a cell that holds its cluster (export_web checks it)
-ATLAS_FILL = 0.48                  # opaque share of that square
-INNER_SINK = (0.7, 1.4)
-CORE_MAX_DEPTH = 0.4
-CARD_SIZE = (0.82, 1.18)           # random half-size factor
-CARD_CREASE = 0.3                  # cards smaller by this share in the creases between clumps (keeps the lobes)
-CARD_ROLL = 0.4                    # roll jitter (radians, +-)
-CARD_DT = (-0.08, 0.05)            # gradient offset at the cluster base and at the tips
-CARD_TINT = 0.04                   # random gradient offset per card (+-)
-CARD_CORNERS = np.array([(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)])   # counter-clockwise facing the camera
-# shadow caster: lobed hull (geodesic frequency, depth inside the surface in metres) and one-triangle leaves
-# (count from the triangle budget, area / visible canopy area, max lift of the tips in radians)
-SHADOW_SPEC = dict(tree=300, bush=120, hull=1, depth=0.12, coverage=0.6, tilt=0.2, rings=3, sides=4, branches=0,
-                   top=0.25)
-# one-triangle leaf (u along the leaf axis, v across in units of the width, h along the normal; area / length^2)
-SHADOW_LEAF = dict(u=np.array([-0.32, 0.68, -0.32]), v=np.array([0.5, 0.0, -0.5]), h=np.array([-0.03, 0.03, -0.03]),
-                   dt=np.array([-0.05, 0.05, -0.05]), width=0.62, area=0.31)
+# leaf templates (u along the leaf axis, v across in units of the width, h along the normal) and area / length^2
+LEAF_SHAPES = {
+    "diamond": dict(u=np.array([-0.42, 0.08, 0.58, 0.08]), v=np.array([0.0, 0.5, 0.0, -0.5]),
+                    h=np.array([0.0, -0.05, 0.03, -0.05]), dt=np.array([-0.08, 0.0, 0.05, 0.0]),
+                    faces=((0, 1, 2), (0, 2, 3)), width=0.52),
+    "tri": dict(u=np.array([-0.32, 0.68, -0.32]), v=np.array([0.5, 0.0, -0.5]), h=np.array([-0.03, 0.03, -0.03]),
+                dt=np.array([-0.05, 0.05, -0.05]), faces=((0, 1, 2),), width=0.62),
+}
+for _s in LEAF_SHAPES.values():
+    _s["area"] = 0.5 * _s["width"]          # both shapes span one length and one width
 
 
 def _geodesic(f):
@@ -596,10 +565,9 @@ def _geodesic(f):
     return np.array(verts), faces
 
 
-def _hull(canopy, f, offset, mat, tint=0.16):
+def _hull(canopy, f, offset, mat):
     """Closed hull: a geodesic sphere around the canopy centre whose vertices are moved along their rays onto
-    the outermost crossing of the lumpy canopy surface shifted by `offset` (negative = inside); gradient value
-    shade + tint."""
+    the outermost crossing of the lumpy canopy surface shifted by `offset` (negative = inside)."""
     U, faces = _geodesic(f)
     c = canopy.center
 
@@ -618,10 +586,10 @@ def _hull(canopy, f, offset, mat, tint=0.16):
         lo, hi = np.where(o, mid, lo), np.where(o, hi, mid)
     V = c + U * (0.5 * (lo + hi))[:, None]
     n = canopy.normals(V)
-    return Part(V, faces, [mat] * len(faces), n, t=canopy.shade(V, n) + tint)
+    return Part(V, faces, [mat] * len(faces), n, t=canopy.shade(V, n) + 0.16)
 
 
-def _blob_hull(canopy, f, offset, mat, tint=0.16):
+def _blob_hull(canopy, f, offset, mat):
     """Lobed hull: a geodesic sphere per canopy blob moved onto the lumpy surface shifted by `offset`, faces
     buried in other blobs dropped (keeps the clump silhouette at a few triangles per blob)."""
     U, tri = _geodesic(f)
@@ -637,13 +605,13 @@ def _blob_hull(canopy, f, offset, mat, tint=0.16):
         off += len(p)
     V = canopy.project(np.concatenate(verts), offset=offset)
     n = canopy.normals(V)
-    return Part(V, faces, [mat] * len(faces), n, t=canopy.shade(V, n) + tint)
+    return Part(V, faces, [mat] * len(faces), n, t=canopy.shade(V, n) + 0.16)
 
 
-def _shadow_leaves(canopy, n_leaves, coverage, nrng, mat, tilt):
-    """`n_leaves` one-triangle leaves laid over the visible canopy surface, sized for the given coverage; tips
+def _lod_leaves(canopy, n_leaves, coverage, shape, nrng, mat, tilt=0.35):
+    """`n_leaves` leaves of one shape laid over the visible canopy surface, sized for the given coverage; tips
     lifted off the surface by up to `tilt` radians."""
-    sh = SHADOW_LEAF
+    sh = LEAF_SHAPES[shape]
     C, R = canopy.C, canopy.R
     K = len(C)
     areas = _ellipsoid_area(R)
@@ -695,72 +663,14 @@ def _shadow_leaves(canopy, n_leaves, coverage, nrng, mat, tilt):
     field_n = canopy.normals(V)
     vn = _normalize(0.88 * field_n + 0.12 * np.repeat(nn, k, axis=0))
     t = canopy.shade(V, field_n) + np.repeat(nrng.uniform(-0.06, 0.06, L), k) + np.tile(sh["dt"], L)
-    faces = [(int(b0), int(b0) + 1, int(b0) + 2) for b0 in np.arange(L) * k]
+    base = np.arange(L) * k
+    faces = [tuple(int(b0 + i) for i in tri) for b0 in base for tri in sh["faces"]]
     return Part(V, faces, [mat] * len(faces), vn, t=t)
-
-
-def _card_points(canopy, n, nrng):
-    """`n` points spread evenly over the visible canopy surface (farthest-point selection among dense samples, the
-    underside a little sparser); returns them and the visible surface area."""
-    C, R = canopy.C, canopy.R
-    areas = _ellipsoid_area(R)
-    pts, vis = [], 0.0
-    for i in range(len(C)):
-        m = int(12 * n * areas[i] / areas.sum()) + 8
-        p = C[i] + _fib_sphere(m, nrng) * R[i]
-        f = canopy.implicit(p)
-        f[:, i] = 9.0
-        keep = f.min(1) > 0.97
-        pts.append(p[keep])
-        vis += float(areas[i] * keep.mean())
-    P = canopy.project(np.concatenate(pts))
-    w = 0.7 + 0.3 * _smoothstep(-0.75, -0.1, canopy.surface_normal(P)[:, 2])     # spacing ~ 1 / w
-    pick = [int(np.argmax(P[:, 2]))]
-    d = np.linalg.norm(P - P[pick[0]], axis=1)
-    for _ in range(n - 1):
-        j = int(np.argmax(d * w))
-        pick.append(j)
-        d = np.minimum(d, np.linalg.norm(P - P[j], axis=1))
-    return P[pick], vis
-
-
-def _lod_cards(canopy, spec, n, nrng, mat):
-    """`n` leaf-cluster cards (see CARD_SPECS); returns the card Part and the mean half size."""
-    n_in = int(round(n * spec["inner"]))
-    n_out = n - n_in
-    P, vis_area = _card_points(canopy, n_out, nrng)
-    sink = np.full(n, float(spec["sink"]))
-    if n_in:
-        P = np.concatenate([P, _card_points(canopy, n_in, nrng)[0]])
-        sink[n_out:] += nrng.uniform(*INNER_SINK, n_in)
-    h = math.sqrt(spec["coverage"] * vis_area / (n_out * 4.0 * ATLAS_FILL))
-    shrink = 1.0 - CARD_CREASE * canopy.crease(P, 0.8 * h)
-    hs = h * nrng.uniform(*CARD_SIZE, n) * shrink / math.sqrt(np.mean(shrink[:n_out] ** 2))
-    shade_at = canopy.project(P, offset=-(sink - spec["sink"]) * hs)     # outer layer: the surface value
-    P = canopy.project(P, offset=-sink * hs)
-    nrm = canopy.normals(P)
-    t = canopy.shade(shade_at, nrm) + nrng.uniform(-CARD_TINT, CARD_TINT, n)
-    cell = nrng.integers(0, ATLAS_CELLS[0] * ATLAS_CELLS[1], n)
-    mirror = np.where(nrng.random(n) < 0.5, -1.0, 1.0)
-    roll = nrng.uniform(-CARD_ROLL, CARD_ROLL, n)
-
-    cx, cy = CARD_CORNERS[:, 0], CARD_CORNERS[:, 1]
-    col = (cell % ATLAS_CELLS[0]).astype(float)[:, None]
-    row = (cell // ATLAS_CELLS[0]).astype(float)[:, None]
-    u = (col + 0.5 + 0.5 * ATLAS_CROP * mirror[:, None] * cx[None]) / ATLAS_CELLS[0]
-    v = (row + 0.5 - 0.5 * ATLAS_CROP * cy[None]) / ATLAS_CELLS[1]      # atlas rows top-down, leaf tips at the top
-    uv = np.stack([u, 1.0 - v], axis=2).reshape(-1, 2)
-    card = np.stack([np.broadcast_to(cx, (n, 4)), np.broadcast_to(cy, (n, 4)), np.repeat(hs[:, None], 4, axis=1),
-                     np.repeat(roll[:, None], 4, axis=1)], axis=2).reshape(-1, 4)
-    tc = (t[:, None] + np.where(cy > 0.0, CARD_DT[1], CARD_DT[0])[None]).ravel()
-    faces = [(4 * k, 4 * k + 1, 4 * k + 2, 4 * k + 3) for k in range(n)]
-    return Part(np.repeat(P, 4, axis=0), faces, [mat] * n, np.repeat(nrm, 4, axis=0), t=tc, uv=uv,
-                card=card), float(hs.mean())
 
 
 def _trunk_lod(skel, canopy, nrng, spec):
     """Trunk (and optionally branches) along the full variant's skeleton with fewer rings and sides; the
-    trunk stops `top` of the way from the canopy bottom to the trunk top (the rest hides in the canopy)."""
+    trunk stops `top` of the way from the canopy bottom to the trunk top (the rest hides in the hull)."""
     path, radii, flare = skel["path"], skel["radii"], skel["flare"]
     z_stop = canopy.zmin + spec["top"] * (path[-1, 2] - canopy.zmin)
     last = max(2, int(np.searchsorted(path[:, 2], z_stop)) + 1)
@@ -780,88 +690,42 @@ def _trunk_lod(skel, canopy, nrng, spec):
     return Part(V, faces, [0] * len(faces), np.concatenate(normals), cols=_bark_colors(V, nrng))
 
 
-def _variant_cards(spec, with_trunk, lod):
-    """Parts of one card level of detail (trunk, core, cards) and its card count."""
-    cs = CARD_SPECS[lod]
+def _variant_lod(spec, with_trunk, lod):
+    ls = LOD_SPECS[lod]
     nrng = np.random.default_rng(spec["seed"])
     canopy = Canopy(spec["blobs"], nrng)            # the full variant's canopy (same draws)
-    lrng = np.random.default_rng(spec["seed"] * 7 + lod)
     parts = []
     if with_trunk:
         skel = {}
         _trunk(spec, nrng, skeleton=skel)           # the full variant's trunk skeleton (same draws)
-        parts.append(_trunk_lod(skel, canopy, lrng, cs))
-    first = len(parts)
-    n = cs["tree"] if with_trunk else cs["bush"]
-    cards, h = _lod_cards(canopy, cs, n, lrng, first + 1)
-    depth = min(cs["core_depth"] * h, CORE_MAX_DEPTH * float(canopy.R[0].min()))
-    parts.append(_hull(canopy, cs["core"][0 if with_trunk else 1], -depth, first, tint=cs["core_tint"]))
-    parts.append(cards)
-    return parts, n
-
-
-def _variant_shadow(spec, with_trunk):
-    """Shadow caster: trunk, lobed hull and one-triangle leaves (SHADOW_SPEC)."""
-    ss = SHADOW_SPEC
-    nrng = np.random.default_rng(spec["seed"])
-    canopy = Canopy(spec["blobs"], nrng)
-    lrng = np.random.default_rng(spec["seed"] * 7 + 2)
-    parts = []
-    if with_trunk:
-        skel = {}
-        _trunk(spec, nrng, skeleton=skel)
-        parts.append(_trunk_lod(skel, canopy, lrng, ss))
-    mat = len(parts)
-    parts.append(_blob_hull(canopy, ss["hull"], -ss["depth"] * (1.0 if with_trunk else 0.6), mat))
+        lrng = np.random.default_rng(spec["seed"] * 7 + lod)
+        parts.append(_trunk_lod(skel, canopy, lrng, ls))
+        budget, f, mat = ls["tree"], ls["hull"], 1
+    else:
+        lrng = np.random.default_rng(spec["seed"] * 7 + lod)
+        budget, f, mat = ls["bush"], ls["hull_bush"], 0
+    depth = ls["depth"] * (1.0 if with_trunk else 0.6)
+    hull = _blob_hull if ls["hull_type"] == "blobs" else _hull
+    parts.append(hull(canopy, f, -depth, mat))
     used = sum(len(fc) - 2 for p in parts for fc in p.faces)
-    budget = ss["tree"] if with_trunk else ss["bush"]
-    parts.append(_shadow_leaves(canopy, max(8, budget - used), ss["coverage"], lrng, mat, ss["tilt"]))
+    per_leaf = len(LEAF_SHAPES[ls["leaf"]]["faces"])
+    parts.append(_lod_leaves(canopy, max(8, (budget - used) // per_leaf), ls["coverage"], ls["leaf"], lrng, mat,
+                             ls["tilt"]))
     return _merge(parts)
 
 
-def _card_layers(me, parts):
-    """Atlas UV map and the '_CARD' point attribute of a card LOD mesh (zero on the trunk and the core)."""
-    li = np.empty(len(me.loops), np.int32)
-    me.loops.foreach_get("vertex_index", li)
-    uv = np.concatenate([p.uv for p in parts])
-    layer = me.uv_layers.new(name="UVMap")
-    layer.data.foreach_set("uv", uv[li].astype(np.float32).ravel())
-    col = me.color_attributes.active_color_name
-    attr = me.attributes.new("_CARD", "FLOAT_COLOR", "POINT")
-    attr.data.foreach_set("color", np.concatenate([p.card for p in parts]).astype(np.float32).ravel())
-    me.color_attributes.active_color_name = col
-    me.color_attributes.render_color_index = me.color_attributes.active_color_index
-
-
-def card_materials():
-    """Materials of the card LOD canopies (the viewer shades them itself; here they name the glTF primitives)."""
-    core = common.material("M_LeafCore", base=common.color("leaf_mid"), roughness=0.8, use_vcol=True)
-    cards = common.material("M_LeafCards", base=common.color("leaf_mid"), roughness=0.8, use_vcol=True)
-    return core, cards
-
-
 def build_lod_meshes(mat_bark, mat_leaves):
-    """Card LOD meshes '<Kind><Variant>_<tint>_L<lod>' (M_Bark, M_LeafCore, M_LeafCards; bushes without bark) and
-    shadow casters '<Kind><Variant>_<tint>_Shadow' (M_Bark, M_Leaves) of every variant and tint; returns
-    {mesh name: {variant, lod (None for the shadow caster), mesh, tris, cards}}. Does not touch the scene's full
-    variant meshes or objects."""
-    mat_core, mat_cards = card_materials()
+    """LOD meshes '<Kind><Variant>_<tint>_L<lod>' of every variant and tint (see LOD_SPECS); returns
+    {mesh name: {variant, lod, mesh, tris}}. Does not touch the scene's full variant meshes or objects."""
     out = {}
-    jobs = [("Tree", n, s, TREE_TINTS) for n, s in TREES.items()]
-    jobs += [("Bush", n, s, BUSH_TINTS) for n, s in BUSHES.items()]
-    for kind, vname, spec, tints in jobs:
-        tree = kind == "Tree"
-        lods = [_variant_cards(spec, tree, lod) for lod in range(len(CARD_SPECS))]
-        shadow = _variant_shadow(spec, tree)
-        for tint in tints:
-            variant = f"{kind}{vname}_{tint}"
-            for lod, (parts, n) in enumerate(lods):
-                mats = ([mat_bark] if tree else []) + [mat_core, mat_cards]
-                me = _new_mesh(f"{variant}_L{lod}", _merge(parts), mats, tint, free_normals=True)
-                _card_layers(me, parts)
-                out[me.name] = dict(variant=variant, lod=lod, mesh=me, tris=_mesh_tris(me), cards=n)
-            me = _new_mesh(f"{variant}_Shadow", shadow, [mat_bark, mat_leaves] if tree else [mat_leaves], tint)
-            out[me.name] = dict(variant=variant, lod=None, mesh=me, tris=_mesh_tris(me), cards=0)
+    jobs = [("Tree", n, s, TREE_TINTS, [mat_bark, mat_leaves]) for n, s in TREES.items()]
+    jobs += [("Bush", n, s, BUSH_TINTS, [mat_leaves]) for n, s in BUSHES.items()]
+    for kind, vname, spec, tints, mats in jobs:
+        for lod in range(len(LOD_SPECS)):
+            data = _variant_lod(spec, kind == "Tree", lod)
+            for tint in tints:
+                me = _new_mesh(f"{kind}{vname}_{tint}_L{lod}", data, mats, tint)
+                out[me.name] = dict(variant=f"{kind}{vname}_{tint}", lod=lod, mesh=me, tris=_mesh_tris(me))
     return out
 
 

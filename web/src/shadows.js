@@ -1,7 +1,6 @@
 // One directional shadow map for the key light (sun or moon), rendered on demand: when the light direction changes
 // (time of day) or the set of casters changes (close-up corridor). The casters live in their own scene, so they can
-// be cheaper than what the camera sees: house + rocks + terrain (back faces) and the opaque tree hulls
-// (<Variant>_Shadow, instanced by forest.js).
+// be cheaper than what the camera sees: house + rocks + terrain (back faces) and the L2 tree proxies.
 // Depth only: a 16-bit depth texture with hardware comparison (sampler2DShadow, bilinear PCF), sampled by every
 // material through the shared uniforms uShadowMap / uShadowMatrix / uShadowParams (see shaderlib.js).
 import {
@@ -33,7 +32,7 @@ void main() {
 }`;
 const DEPTH_FRAGMENT = 'void main() { gl_FragColor = vec4( 1.0 ); }';
 
-// tree hulls: leaves pushed out along the canopy normal, so the coarse hull casts a shadow as full as the canopy's
+// tree proxies: leaves pushed out along the canopy normal, so the coarse L2 canopy casts a shadow as full as L0's
 const TREE_DEPTH_VERTEX = /* glsl */ `
 attribute float aLeaf;
 uniform float uInflate;
@@ -129,7 +128,7 @@ export function createShadows(renderer, lighting, region) {
     state.dirty = true;
   }
 
-  /** An InstancedMesh owned by the caller (the tree hulls, with createTreeDepthMaterial). */
+  /** An InstancedMesh owned by the caller (the tree proxies, with createTreeDepthMaterial). */
   function addObject(object) {
     object.matrixAutoUpdate = false;
     object.updateMatrix();
