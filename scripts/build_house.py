@@ -848,7 +848,8 @@ def build_chimney(P, r, counts):
 
 
 def build_smoke(P, r):
-    """A thin wisp rising ~3.8 m in a few soft S-bends, drifting slightly downwind and tapering off."""
+    """A plume rising ~3.8 m in gentle S-bends, drifting slightly downwind and widening from the flue; the web
+    viewer sets it in motion (web/src/materials/smoke.js)."""
     start = Vector((CH_X + 0.03, CH_Y, CH_TOP + 0.12))
     height = 3.8
     ctrl = [start - Vector((0, 0, 0.3)), start.copy()]
@@ -856,7 +857,7 @@ def build_smoke(P, r):
     phase = r.uniform(0.0, 2 * math.pi)
     for i in range(1, n_ctrl + 1):
         t = i / n_ctrl
-        amp = 0.04 + 0.2 * t
+        amp = 0.03 + 0.1 * t
         sway = math.sin(2 * math.pi * 1.6 * t + phase)
         ctrl.append(Vector((start.x + 0.4 * t * t + sway * amp * r.uniform(0.8, 1.0),
                             start.y - 0.15 * t + math.cos(2 * math.pi * 0.9 * t + phase) * amp * 0.45,
@@ -872,14 +873,14 @@ def build_smoke(P, r):
             pts.append(0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
                               + (-p0 + 3 * p1 - 3 * p2 + p3) * t3))
     pts.append(ctrl[-2])
-    rings, seg = len(pts) - 1, 7
+    rings, seg = len(pts) - 1, 10
     verts, faces = [], []
     for i, p in enumerate(pts):
         t = i / rings
         tan = (pts[min(i + 1, rings)] - pts[max(i - 1, 0)]).normalized()
         n1 = tan.cross(Vector((1, 0, 0))).normalized()
         n2 = tan.cross(n1)
-        rad = 0.055 * (1.0 - 0.5 * t) * min(1.0, (1.0 - t) * 6.0) + 0.002
+        rad = (0.07 + 0.15 * t ** 0.8) * min(1.0, (1.0 - t) * 6.0) + 0.003
         for k in range(seg):
             a = 2 * math.pi * k / seg
             verts.append(p + (n1 * math.cos(a) + n2 * math.sin(a)) * rad)

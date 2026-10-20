@@ -50,11 +50,12 @@ decimated, blossoms as octahedra), meadow flowers rebuilt from light prototypes 
 stems and the leaves hidden in the grass dropped), a coarser terrain (fine in the clearing, coarse in the
 forest), objects merged per material, trees as LOD meshes from build_trees.build_lod_meshes.
 
-Vertex bakes sample only at corners. Faces whose corners are all hidden but whose centre is visible get a centre
-vertex and are re-baked. Thin single-sided parts (THIN) get their back side baked too and become two-sided.
-Corners that got no sky light or sit inside other closed geometry take the light of the valid corners of their
-face or vertex, slightly darkened, or of a valid vertex nearby, strongly darkened; faces that are entirely hidden
-are deleted.
+Vertex bakes sample only at corners. Faces whose corners are all hidden but that are visible at the centre or
+halfway from it to a corner get a vertex at the most open of these points and are re-baked. Thin single-sided
+parts (THIN) get their back side baked too and become two-sided. Corners that got no sky light or sit inside other
+closed geometry take the light of the valid corners of their face or vertex, slightly darkened, or of a valid
+vertex nearby, strongly darkened; faces with all corners hidden that lie inside a single closed piece are deleted
+(faces covered by several pieces stay: the joints between the pieces may show them).
 """
 import contextlib
 import json
@@ -105,7 +106,8 @@ MARCH_HITS = 8                 # surfaces followed along each ray of the inside 
 DARK_SKY = 0.02                # a corner with less sky light (S) is no visible sample: it sits in a closed cavity
 CAVITY_RADIUS = 1.0            # hidden corners with no valid neighbour borrow light from a valid vertex this close
 CAVITY_DARKEN = 0.35           # ... darkened this much: faces seen only through gaps are dim, not black
-POKE_MIN_AREA = 0.01          # hidden faces smaller than this (m2) are not worth a centre vertex
+POKE_MIN_AREA = 0.01          # hidden faces smaller than this (m2) are not worth an extra vertex
+OPEN_RADIUS = 0.3              # reach of the openness test that picks where a hidden face gets its vertex (m)
 
 # mobile reduction
 BEVEL_SEGMENTS = 1
@@ -867,21 +869,51 @@ def bake_ground_albedo(terrain, samples, hide):
 
 
 # ---------------------------------------------------------------- hidden corners
-def _occluder_bvh(objs):
-    verts, tris = [], []
-    off = 0
-    for ob in objs:
-        me = ob.data
-        me.calc_loop_triangles()
-        co = _world_coords(ob)
-        t = np.empty(len(me.loop_triangles) * 3, np.int64)
-        me.loop_triangles.foreach_get("vertices", t)
-        verts.append(co)
-        tris.append(t.reshape(-1, 3) + off)
-        off += len(co)
-    V = np.concatenate(verts)
-    T = np.concatenate(tris)
-    return BVHTree.FromPolygons(V.tolist(), T.tolist(), all_triangles=True)
+def _components(tris, n):
+    """Connected component label of every vertex (0 .. count - 1) from the triangles."""
+    lab = np.arange(n)
+    e0 = np.concatenate([tris[:, 0], tris[:, 1]])
+    e1 = np.concatenate([tris[:, 1], tris[:, 2]])
+    while True:
+        a, b = lab[e0], lab[e1]
+        if (a == b).all():
+            break
+        m = np.minimum(a, b)
+        np.minimum.at(lab, a, m)
+        np.minimum.at(lab, b, m)
+        while True:
+            nxt = lab[lab]
+            if (nxt == lab).all():
+                break
+            lab = nxt
+    return np.unique(lab, return_inverse=True)[1]
+
+
+class Occluders:
+    """BVH of the closed occluders; `piece` gives the closed piece (connected part: a plank, a stone, a rock) of
+    every BVH triangle."""
+
+    def __init__(self, objs):
+        verts, tris, pieces = [], [], []
+        off = count = 0
+        for ob in objs:
+            me = ob.data
+            me.calc_loop_triangles()
+            co = _world_coords(ob)
+            t = np.empty(len(me.loop_triangles) * 3, np.int64)
+            me.loop_triangles.foreach_get("vertices", t)
+            t = t.reshape(-1, 3)
+            lab = _components(t, len(co))
+            verts.append(co)
+            tris.append(t + off)
+            pieces.append(lab[t[:, 0]] + count)
+            off += len(co)
+            count += int(lab.max()) + 1 if len(lab) else 0
+        V = np.concatenate(verts)
+        T = np.concatenate(tris)
+        self.bvh = BVHTree.FromPolygons(V.tolist(), T.tolist(), all_triangles=True)
+        self.ray = self.bvh.ray_cast
+        self.piece = np.concatenate(pieces)
 
 
 def _ray_dirs(n):
@@ -905,6 +937,61 @@ def _inside(ray, origin, normal):
             o = loc + d * 1e-4
         votes += depth > 0
     return votes >= 2
+
+
+def _openness(ray, origin, normal):
+    """Share of nine directions (the normal and eight 60 degrees from it) that leave OPEN_RADIUS without a hit:
+    low in a crease along a brace or under a beam."""
+    helper = Vector((0.0, 0.0, 1.0)) if abs(normal.z) < 0.9 else Vector((1.0, 0.0, 0.0))
+    t1 = normal.cross(helper).normalized()
+    t2 = normal.cross(t1)
+    dirs = [normal] + [normal * 0.5 + (t1 * math.cos(a) + t2 * math.sin(a)) * 0.866
+                       for a in (k * math.pi / 4 for k in range(8))]
+    return sum(ray(origin, d, OPEN_RADIUS)[0] is None for d in dirs) / len(dirs)
+
+
+def _containers(occ, origin, normal):
+    """Closed pieces that contain the point: along at least two of the three rays the first hit on the piece
+    leaves it (inside a convex piece every ray does)."""
+    votes = {}
+    for d in _ray_dirs(normal):
+        o, seen = origin, set()
+        for _ in range(MARCH_HITS):
+            loc, nrm, idx, _ = occ.ray(o, d, INSIDE_RAY)
+            if loc is None:
+                break
+            k = int(occ.piece[idx])
+            if k not in seen:
+                seen.add(k)
+                if nrm.dot(d) > 0.0:
+                    votes[k] = votes.get(k, 0) + 1
+            o = loc + d * 1e-4
+    return {k for k, v in votes.items() if v >= 2}
+
+
+def _face_points(mw, poly, verts):
+    """World positions of a face's centre and corners, the corners moved 1 mm toward the centre."""
+    c = poly.center
+    pts = [mw @ c]
+    for v in poly.vertices:
+        p = verts[v].co
+        d = c - p
+        pts.append(mw @ (p + d * min(1.0, 1e-3 / max(d.length, 1e-9))))
+    return pts
+
+
+def _inside_one_piece(occ, points, normal):
+    """True when one closed piece contains every point (pushed 1 mm off the face along its normal): for convex
+    pieces (planks, timbers, shingles, stones) the whole face between the points is then inside it. A face
+    covered only by several pieces does not count: the joints between them (mortar gaps, the sides of a brace
+    crossing a plank) may show it."""
+    common = None
+    for p in points:
+        found = _containers(occ, p + normal * 1e-3, normal)
+        common = found if common is None else common & found
+        if not common:
+            return False
+    return True
 
 
 def _cull_faces(me, faces):
@@ -956,14 +1043,14 @@ def _albedo(ob):
     return np.clip(out, 0.0, 1.0)
 
 
-def fix_hidden_corners(objs, bvh, layers):
+def fix_hidden_corners(objs, occ, layers):
     """Vertex bakes sample exactly at the corners. A corner that received (almost) no sky light, or lies inside
     other closed geometry, is no visible sample. In every layer it takes the mean of the valid corners of its
     face * HIDDEN_DARKEN, else of the valid corners at its vertex, else (faces seen only through gaps) the value
-    of the nearest valid vertex within CAVITY_RADIUS * CAVITY_DARKEN. Faces whose corners and centre are all
-    hidden are deleted (plank backs in the core, shingle tops under the next row, rock bottoms in the ground),
-    except on the emitters (GLOW). Returns {object: {fixed, unfixed, tris}}."""
-    ray = bvh.ray_cast
+    of the nearest valid vertex within CAVITY_RADIUS * CAVITY_DARKEN. Faces with all corners hidden that lie
+    inside a single closed piece are deleted (plank ends in the posts, shingle tops under the next row, stone
+    backs in the chimney core), except on the emitters (GLOW). Returns {object: {fixed, unfixed, tris}}."""
+    ray = occ.ray
     state = []
     nl = len(layers)
     for ob in objs:
@@ -1017,7 +1104,7 @@ def fix_hidden_corners(objs, bvh, layers):
         for p in np.nonzero(s["n_face"] == 0)[0] if ob.name not in GLOW else ():
             poly = me.polygons[p]
             n = (n3 @ poly.normal).normalized()
-            if _inside(ray, mw @ poly.center + n * 1e-3, n):
+            if _inside_one_piece(occ, _face_points(mw, poly, me.vertices), n):
                 cull.append(int(p))
         if cull:
             _cull_faces(me, cull)
@@ -1048,11 +1135,12 @@ def weld_corners(objs, layers):
     return out
 
 
-def poke_cavity_faces(objs, bvh):
-    """Faces of at least POKE_MIN_AREA whose corners all came out hidden but whose centre is visible get a centre
-    vertex, so a re-bake samples their visible part instead of the occluded corners. Returns {object name: poked
-    faces}."""
-    ray = bvh.ray_cast
+def poke_cavity_faces(objs, occ):
+    """Faces of at least POKE_MIN_AREA whose corners all came out hidden but which are visible at their centre or
+    halfway from it to a corner (a brace crossing the middle of a plank) get a vertex at the most open of the
+    visible points (not in the crease along the brace), so a re-bake samples their visible part instead of the
+    occluded corners; the hidden corners then take its light. Returns {object name: poked faces}."""
+    ray = occ.ray
     poked = {}
     for ob in objs:
         me = ob.data
@@ -1068,17 +1156,28 @@ def poke_cavity_faces(objs, bvh):
         mw = ob.matrix_world
         n3 = mw.to_3x3().inverted().transposed()
         faces = []
+        verts = me.vertices
         for p in np.nonzero(candidates)[0]:
             poly = me.polygons[p]
             n = (n3 @ poly.normal).normalized()
-            if not _inside(ray, mw @ poly.center + n * 1e-3, n):
-                faces.append(int(p))
+            c = poly.center
+            best = None
+            for q in [c] + [(c + verts[v].co) * 0.5 for v in poly.vertices]:
+                o = mw @ q + n * 1e-3
+                if _inside(ray, o, n):
+                    continue
+                score = _openness(ray, o, n)
+                if best is None or score > best[0]:
+                    best = (score, q.copy())
+            if best is not None:
+                faces.append((int(p), best[1]))
         if not faces:
             continue
         bm = bmesh.new()
         bm.from_mesh(me)
         bm.faces.ensure_lookup_table()
-        bmesh.ops.poke(bm, faces=[bm.faces[i] for i in faces])
+        for f, q in [(bm.faces[i], q) for i, q in faces]:
+            bmesh.ops.poke(bm, faces=[f])["verts"][0].co = q
         bm.to_mesh(me)
         bm.free()
         me.update()
@@ -1508,8 +1607,8 @@ def main():
     _log("layer bakes", t0)
 
     occluders = [ob for ob in lit if ob.name.startswith(("House_", "Rocks_")) and ob.name not in OCCLUDER_SKIP]
-    bvh = _occluder_bvh(occluders + [terrain])
-    poked = poke_cavity_faces([ob for ob in lit if ob.name not in THIN], bvh)
+    occ = Occluders(occluders + [terrain])
+    poked = poke_cavity_faces([ob for ob in lit if ob.name not in THIN], occ)
     rebake = [ob for ob in lit if ob.name in poked]
     if rebake:
         bake_layers(lights, LAYERS, None, (), rebake, samples, RES, blur)
@@ -1518,7 +1617,7 @@ def main():
     _log("back sides", t0, tris=two_sided)
     lights.restore()
 
-    hidden = fix_hidden_corners(lit, bvh, list(LAYERS))
+    hidden = fix_hidden_corners(lit, occ, list(LAYERS))
     _log("hidden corners", t0, **{k: sum(v[k] for v in hidden.values()) for k in ("fixed", "unfixed", "tris")})
     weld = weld_corners(lit, list(LAYERS))
     _log("weld", t0, corners=sum(v[0] for v in weld.values()), values=sum(v[1] for v in weld.values()))
