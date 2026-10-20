@@ -29,8 +29,14 @@ Output (manifest.version 2):
                                 COLOR_2 = sqrt(B / bounceScale) rgb + Z a (the optimizer renames the exporter's
                                 _SKY / _BOUNCE attributes)
                        terrain  COLOR_0 = albedo, TEXCOORD_0 = planar UV
-                       treeLOD  <Variant>_L0/_L1/_L2 at the origin, primitives M_Bark / M_Leaves, COLOR_0 = albedo,
-                                canopy normals; placed from manifest.trees.instances
+                       treeLOD  <Variant>_L0/_L1/_L2 at the origin (extras variant, lod, cards), placed from
+                                manifest.trees.instances. Primitives M_Bark (trunk), M_LeafCore (opaque inner core)
+                                and M_LeafCards (leaf-cluster cards the viewer turns to the camera: 4 vertices per card
+                                at the card centre, NORMAL = canopy normal, COLOR_0 = albedo tint, TEXCOORD_0 = atlas
+                                corner in leaves.png, _CARD = (corner x, corner y with +1 toward the leaf tips, half
+                                size m, roll jitter rad), float); see build_trees.CARD_SPECS
+                       treeShadow  <Variant>_Shadow (extras variant): the shadow caster of the variant, primitives
+                                M_Bark / M_Leaves, canopy normals
                        water    PondWater, COLOR_0 = depth colour + alpha
                        smoke    House_Smoke
   terrain_sky.png    1024^2 RGB data: sqrt(S / skyScale)
@@ -39,8 +45,14 @@ Output (manifest.version 2):
   terrain_zenith.png 512^2 grey data: Z
   ground_albedo.png  512^2 sRGB: the ground colour under the grass
   grass.png          512^2 RGB data: R = grass density, G/B = terrain height (16 bit, big endian)
-  manifest.json      layer scales, map half size, grass, trees (instances, LOD distances), time of day, default sun
-                     elevation, lantern light position, haze, camera targets and close-up corridor, file sizes
+  leaves.png         1024^2 RGBA sRGB, straight alpha: the leaf-cluster atlas (textures/leaf_clusters.png, 2 x 2 cells,
+                     cluster base at the bottom centre of its cell; a card shows the centred square of its cell, crop =
+                     its side in cells), grey stretched by LEAF_CONTRAST around its mean, colour grown into the
+                     transparent texels; the viewer multiplies it into the card albedo divided by
+                     manifest.trees.leafAtlas.meanGrey and cuts the alpha at alphaCutoff
+  manifest.json      layer scales, map half size, grass, trees (instances, LOD distances, leaf atlas), time of day,
+                     default sun elevation, lantern light position, haze, camera targets and close-up corridor, file
+                     sizes
 All maps share the planar mapping u = (x + 55) / 110, v = (z + 55) / 110 (three.js x / z); the first PNG row is
 v = 0 (flipY = false).
 
@@ -158,6 +170,12 @@ GRASS_VALUE = (0.84, 0.94)
 GRASS_SATURATION = (0.86, 0.96)
 GRASS_TRANSLUCENT = ("#d6e27a", 0.15)
 CANOPY_GRASS = (0.95, 0.55)    # grass density fades to 0 from this fraction of a canopy radius to this one
+LEAF_ATLAS_SRC = os.path.join(common.ROOT, "textures", "leaf_clusters.png")
+LEAF_ATLAS = "leaves.png"
+LEAF_ALPHA_CUTOFF = 0.5
+LEAF_ALPHA_SOFT = 0.75         # sigma (texels) of the Gaussian that turns the binary alpha into a ramp across the cutoff
+LEAF_CONTRAST = 1.0            # grey contrast of leaves.png around the mean grey (linear) of the source atlas
+LEAF_DILATE = 48               # texels the leaf colour is grown into the transparent area (the mean grey beyond)
 LOD_TREE_BUDGET = 200000       # tree triangles per camera preset the suggested LOD distances keep under
 C3 = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]])   # Blender -> three.js
 LF = chr(10)                   # manifest.json line ending on every platform
@@ -206,6 +224,11 @@ def linear_to_srgb(x):
     return np.where(x <= 0.0031308, x * 12.92, 1.055 * np.power(x, 1.0 / 2.4) - 0.055)
 
 
+def srgb_to_linear(x):
+    x = np.clip(x, 0.0, 1.0)
+    return np.where(x <= 0.04045, x / 12.92, np.power((x + 0.055) / 1.055, 2.4))
+
+
 def sqrt_encode(x, scale):
     """8-bit sqrt encoding of a non-negative linear value: c = sqrt(x / scale), decoded as c^2 * scale."""
     return np.round(np.sqrt(np.clip(x / scale, 0.0, 1.0)) * 255.0).astype(np.uint8)
@@ -216,8 +239,8 @@ def _png_chunk(tag, data):
 
 
 def write_png(path, img8, srgb=False):
-    """8-bit grey (h, w) or RGB (h, w, 3) PNG from a uint8 array, rows top-down, per-row adaptive filtering.
-    Data maps carry no colour chunk; srgb=True adds the sRGB chunk."""
+    """8-bit grey (h, w), RGB (h, w, 3) or RGBA (h, w, 4, straight alpha) PNG from a uint8 array, rows top-down,
+    per-row adaptive filtering. Data maps carry no colour chunk; srgb=True adds the sRGB chunk."""
     if img8.ndim == 2:
         img8 = img8[..., None]
     h, w, c = img8.shape
@@ -236,7 +259,7 @@ def write_png(path, img8, srgb=False):
     best = cost.argmin(axis=0)
     rows = cands[best, np.arange(h)].astype(np.uint8)
     raw = np.concatenate([best.astype(np.uint8)[:, None], rows], axis=1).tobytes()
-    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2 if c == 3 else 0, 0, 0, 0)
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, {1: 0, 3: 2, 4: 6}[c], 0, 0, 0)
     with open(path, "wb") as f:
         f.write(b"\x89PNG\r\n\x1a\n")
         f.write(_png_chunk(b"IHDR", ihdr))
@@ -1242,17 +1265,89 @@ def tree_instances():
 
 
 def lod_objects(coll):
-    lods = build_trees.build_lod_meshes(bpy.data.materials["M_Bark"], bpy.data.materials["M_Leaves"])
+    """Objects of the web tree meshes (build_trees.build_lod_meshes): '<variant>_L<lod>' with extras shade =
+    'treeLOD', variant, lod, cards and '<variant>_Shadow' with shade = 'treeShadow', variant. Returns the objects
+    and the LOD mesh infos."""
+    meshes = build_trees.build_lod_meshes(bpy.data.materials["M_Bark"], bpy.data.materials["M_Leaves"])
     objs = []
-    for name, info in sorted(lods.items()):
+    for name, info in sorted(meshes.items()):
         ob = bpy.data.objects.new(name, info["mesh"])
         coll.objects.link(ob)
         ob.hide_render = True
-        ob["shade"] = "treeLOD"
         ob["variant"] = info["variant"]
-        ob["lod"] = info["lod"]
+        if info["lod"] is None:
+            ob["shade"] = "treeShadow"
+        else:
+            ob["shade"] = "treeLOD"
+            ob["lod"] = info["lod"]
+            ob["cards"] = info["cards"]
         objs.append(ob)
-    return objs, lods
+    return objs, {name: info for name, info in meshes.items() if info["lod"] is not None}
+
+
+def _grow(rgb, filled, steps):
+    """Grow the colour of the `filled` texels into their neighbours `steps` times (mean of the filled ones among
+    the 8 neighbours); returns the colour and the new filled mask."""
+    h, w = filled.shape
+    rgb = np.where(filled[..., None], rgb, 0.0)
+    for _ in range(steps):
+        pc = np.pad(rgb * filled[..., None], ((1, 1), (1, 1), (0, 0)))
+        pf = np.pad(filled.astype(np.float64), 1)
+        acc = np.zeros_like(rgb)
+        cnt = np.zeros(filled.shape)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy or dx:
+                    acc += pc[1 + dy:1 + dy + h, 1 + dx:1 + dx + w]
+                    cnt += pf[1 + dy:1 + dy + h, 1 + dx:1 + dx + w]
+        new = ~filled & (cnt > 0)
+        if not new.any():
+            break
+        rgb[new] = acc[new] / cnt[new][:, None]
+        filled = filled | new
+    return rgb, filled
+
+
+def leaf_atlas(out):
+    """leaves.png from the hand-painted leaf-cluster atlas: alpha cut at LEAF_ALPHA_CUTOFF (the source is binary)
+    and softened by a Gaussian of LEAF_ALPHA_SOFT texels, so the cutoff contour of the bilinearly filtered alpha is a
+    smooth curve instead of texel steps when a card is magnified; grey stretched by LEAF_CONTRAST around the mean grey
+    of the opaque texels (linear), the colour grown LEAF_DILATE texels into the transparent area and the mean grey
+    beyond, so mipmaps never pull black into the leaf edges.
+    Stops when a cluster reaches out of the centred square of its cell that the cards show (build_trees.ATLAS_CROP).
+    Returns manifest.trees.leafAtlas."""
+    img = bpy.data.images.load(LEAF_ATLAS_SRC)
+    img.colorspace_settings.name = "Non-Color"         # raw bytes
+    img.alpha_mode = "STRAIGHT"
+    w, h = img.size
+    px = np.empty(w * h * 4, np.float32)
+    img.pixels.foreach_get(px)
+    bpy.data.images.remove(img)
+    px = px.reshape(h, w, 4)[::-1].astype(np.float64)  # rows top-down
+    opaque = px[..., 3] >= LEAF_ALPHA_CUTOFF
+    # the cards show the centred square of every cell (build_trees.ATLAS_CROP): every cluster has to lie inside it
+    cw, ch = w // build_trees.ATLAS_CELLS[0], h // build_trees.ATLAS_CELLS[1]
+    yy, xx = np.nonzero(opaque)
+    reach = max(np.abs((xx % cw + 0.5) / cw - 0.5).max(), np.abs((yy % ch + 0.5) / ch - 0.5).max()) + 0.5 / cw
+    if reach > 0.5 * build_trees.ATLAS_CROP:
+        raise SystemExit(f"export_web.py: the leaf clusters reach {reach:.3f} of a cell from its centre, more than "
+                         f"build_trees.ATLAS_CROP / 2 = {0.5 * build_trees.ATLAS_CROP}")
+    fill = opaque.sum() / (opaque.size * build_trees.ATLAS_CROP ** 2)
+    print(f"[export_web] leaf atlas: opaque share of the card square {fill:.3f} (build_trees.ATLAS_FILL "
+          f"{build_trees.ATLAS_FILL}), clusters reach {reach:.3f} of a cell from its centre", flush=True)
+    lin = srgb_to_linear(px[..., :3])
+    mean = float(lin[opaque].mean())
+    lin = np.clip(mean + LEAF_CONTRAST * (lin - mean), 0.0, 1.0)
+    rgb, filled = _grow(lin, opaque, LEAF_DILATE)
+    rgb[~filled] = mean
+    img8 = np.zeros((h, w, 4), np.uint8)
+    img8[..., :3] = np.round(linear_to_srgb(rgb) * 255.0)
+    alpha = gaussian_blur(opaque[..., None].astype(np.float64), LEAF_ALPHA_SOFT)[..., 0]
+    img8[..., 3] = np.round(np.clip(alpha, 0.0, 1.0) * 255.0)
+    write_png(os.path.join(out, LEAF_ATLAS), img8, srgb=True)
+    grey = srgb_to_linear(img8[..., :3] / 255.0).mean(axis=2)
+    return {"file": LEAF_ATLAS, "cells": list(build_trees.ATLAS_CELLS), "crop": build_trees.ATLAS_CROP,
+            "meanGrey": _r(grey[opaque].mean(), 5), "alphaCutoff": LEAF_ALPHA_CUTOFF, "contrast": LEAF_CONTRAST}
 
 
 def _frustum_test(cam, aspect, centers, radii, portrait=False):
@@ -1302,7 +1397,7 @@ def lod_plan(instances, lods, cams):
 
     best = [20, 40]
     for d01 in range(20, 121, 5):
-        d12 = 2 * d01                             # L2 leaves are about as large on screen there as L1's at d01
+        d12 = 2 * d01                             # cards grow about 1.5x per level (build_trees.CARD_SPECS)
         if within_budget(d01, d12):
             best = [d01, d12]
     return best
@@ -1561,7 +1656,8 @@ def main():
     for c in cams.values():
         c["corridor"]["hide"] = [names.index(n) for n in c["corridor"]["hideNames"] if n in names]
     lod_distances = lod_plan(instances, lods, cams)
-    _log("tree LODs", t0, meshes=len(lod_obs), lodDistances=lod_distances)
+    leaves = leaf_atlas(out)
+    _log("tree LODs", t0, meshes=len(lod_obs), lodDistances=lod_distances, leafAtlas=leaves)
 
     _patch_meshopt_precision()
     glb = os.path.join(out, "scene.glb")
@@ -1569,9 +1665,9 @@ def main():
                + [bpy.data.objects[c] for c in CAMERAS])
     _log("export", t0, size=os.path.getsize(glb))
 
-    manifest = build_manifest(tod, state, scales, grass, cams, instances, lod_distances)
+    manifest = build_manifest(tod, state, scales, grass, cams, instances, lod_distances, leaves)
     files = ("scene.glb", "terrain_sky.png", "terrain_bounce.png", "terrain_lamp.png", "terrain_zenith.png",
-             "ground_albedo.png", "grass.png")
+             "ground_albedo.png", "grass.png", LEAF_ATLAS)
     manifest["files"] = {name: os.path.getsize(os.path.join(out, name)) for name in files}
     with open(os.path.join(out, "manifest.json"), "w", newline=LF) as f:
         json.dump(manifest, f, indent=1)
@@ -1580,7 +1676,7 @@ def main():
     _log("done", t0, total_bytes=sum(os.path.getsize(os.path.join(out, n)) for n in files + ("manifest.json",)))
 
 
-def build_manifest(tod, state, scales, grass, cams, instances, lod_distances):
+def build_manifest(tod, state, scales, grass, cams, instances, lod_distances, leaf_atlas_info):
     """Everything the viewer reads except 'files' (main adds the file sizes)."""
     mist = bpy.context.scene.world.mist_settings
     lantern = bpy.data.objects["LanternLight"].matrix_world.translation
@@ -1595,6 +1691,7 @@ def build_manifest(tod, state, scales, grass, cams, instances, lod_distances):
             "instances": [{"variant": i["variant"], "p": _r(i["p"], 4), "q": _r(i["q"], 6), "s": _r(i["s"], 5)}
                           for i in instances],
             "lodDistances": lod_distances,
+            "leafAtlas": leaf_atlas_info,
         },
         "timeOfDay": tod,
         "sunDefault": {"elevation": _r(state["sunElevation"], 4)},

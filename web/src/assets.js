@@ -1,6 +1,7 @@
 // Loads the asset set (manifest.json version 2) with byte progress: scene.glb (meshopt), the terrain light layers
-// (terrain_sky / terrain_bounce / terrain_lamp / terrain_zenith, data), ground_albedo (sRGB) and grass.png (density +
-// height, read on the CPU and uploaded as a density texture). PNGs are decoded by src/png.js, so data stays bit exact.
+// (terrain_sky / terrain_bounce / terrain_lamp / terrain_zenith, data), ground_albedo (sRGB), grass.png (density +
+// height, read on the CPU and uploaded as a density texture) and the leaf-cluster atlas (manifest.trees.leafAtlas,
+// sRGB colour + alpha). PNGs are decoded by src/png.js, so data stays bit exact.
 import {
   DataTexture,
   LinearFilter,
@@ -79,24 +80,26 @@ export async function loadAssets(base, onProgress, maxAnisotropy = 4) {
   const manifest = await mres.json();
   if (manifest.version !== 2) throw new Error(`manifest.json version ${manifest.version}: this viewer needs asset contract version 2`);
 
+  const leafFile = manifest.trees.leafAtlas?.file;
+  const files = leafFile ? [...FILES, leafFile] : FILES;
   const expected = {};
-  for (const f of FILES) expected[f] = Number(manifest.files[f]) || 1;
+  for (const f of files) expected[f] = Number(manifest.files[f]) || 1;
   const total = Object.values(expected).reduce((a, b) => a + b, 0);
-  const got = Object.fromEntries(FILES.map((f) => [f, 0]));
+  const got = Object.fromEntries(files.map((f) => [f, 0]));
   const report = () => {
-    const sum = FILES.reduce((a, f) => a + Math.min(got[f], expected[f]), 0);
+    const sum = files.reduce((a, f) => a + Math.min(got[f], expected[f]), 0);
     onProgress(0.85 * (sum / total), `下载 ${(sum / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`);
   };
   const bump = (file) => (n) => {
     got[file] += n;
     report();
   };
-  const buffers = await Promise.all(FILES.map((f) => fetchWithProgress(base + f, bump(f))));
-  const byName = Object.fromEntries(FILES.map((f, i) => [f, buffers[i]]));
+  const buffers = await Promise.all(files.map((f) => fetchWithProgress(base + f, bump(f))));
+  const byName = Object.fromEntries(files.map((f, i) => [f, buffers[i]]));
 
   onProgress(0.88, '解析场景');
   await MeshoptDecoder.ready;
-  const [gltf, skyImg, bounceImg, lampImg, zenithImg, albedoImg, grassImg] = await Promise.all([
+  const [gltf, skyImg, bounceImg, lampImg, zenithImg, albedoImg, grassImg, leafImg] = await Promise.all([
     parseGLB(byName['scene.glb'], base),
     decodePNG(byName['terrain_sky.png']),
     decodePNG(byName['terrain_bounce.png']),
@@ -104,6 +107,7 @@ export async function loadAssets(base, onProgress, maxAnisotropy = 4) {
     decodePNG(byName['terrain_zenith.png']),
     decodePNG(byName['ground_albedo.png']),
     decodePNG(byName['grass.png']),
+    leafFile ? decodePNG(byName[leafFile]) : null,
   ]);
   if (grassImg.channels < 3) throw new Error('grass.png must be RGB (R density, G/B height)');
 
@@ -117,6 +121,8 @@ export async function loadAssets(base, onProgress, maxAnisotropy = 4) {
     density: dataTexture(grassImg, 'grass_density', { red: true, anisotropy: aniso }),
     zenith: dataTexture(zenithImg, 'terrain_zenith', { red: true }),
   };
+  // leaf cards face the camera, so their texel footprint is isotropic: no anisotropic filtering
+  if (leafImg) textures.leaves = dataTexture(leafImg, 'leaves', { srgb: true });
   // CPU copies for the grass generator: density (R) and the 16-bit height (G * 256 + B)
   const n = grassImg.width * grassImg.height;
   const density = new Uint8Array(n);

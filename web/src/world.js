@@ -4,7 +4,7 @@
 import { Box3, Scene, Vector3 } from 'three';
 import { createLitMaterial } from './materials/lit.js';
 import { createTerrainMaterial, grassColorUniforms } from './materials/terrain.js';
-import { createTreeMaterial } from './materials/trees.js';
+import { createTreeMaterials, setCardAlphaMode } from './materials/trees.js';
 import { createGrass, GRASS_DEFAULTS } from './materials/grass.js';
 import { createWaterMaterial } from './materials/water.js';
 import { createSmokeMaterial } from './materials/smoke.js';
@@ -99,8 +99,9 @@ export function buildWorld({ manifest, gltf, textures, grassMap }, lighting, ren
   const litLantern = createLitMaterial(lighting, lighting.emission.M_House_Lantern, 'Lit_Lantern');
   const terrain = createTerrainMaterial(lighting, textures, colorUniforms);
   const water = createWaterMaterial(manifest, lighting, textures);
-  const trees = createTreeMaterial(lighting);
+  const { solid: trees, cards: leafCards } = createTreeMaterials(lighting, textures.leaves, manifest.trees.leafAtlas);
   const custom = [lit, litGlass, litLantern, terrain, water, trees];
+  if (leafCards) custom.push(leafCards);
 
   const meshes = [];
   root.traverse((o) => {
@@ -152,7 +153,7 @@ export function buildWorld({ manifest, gltf, textures, grassMap }, lighting, ren
 
   // ---------------------------------------------------------------- shadow casters and region
   const footprint = groundFootprint(views, half);
-  const forest = createForest(variants, manifest, trees, createTreeDepthMaterial());
+  const forest = createForest(variants, manifest, trees, leafCards, createTreeDepthMaterial());
   let treeTop = 12;
   for (const it of forest.instances) treeTop = Math.max(treeTop, it.sphere.center.y + it.sphere.radius);
   const region = {
@@ -181,17 +182,18 @@ export function buildWorld({ manifest, gltf, textures, grassMap }, lighting, ren
       const wind = tier.wind;
       let changed = m.defines.SHADOW_TAPS !== taps;
       m.defines.SHADOW_TAPS = taps;
-      if (('USE_WIND' in m.defines) !== wind && (m === trees || m === grass.material)) {
+      if (('USE_WIND' in m.defines) !== wind && (m === trees || m === leafCards || m === grass.material)) {
         if (wind) m.defines.USE_WIND = '';
         else delete m.defines.USE_WIND;
         changed = true;
       }
       if (changed) m.needsUpdate = true;
     }
+    if (leafCards) setCardAlphaMode(leafCards, tier.msaa);
     shadows.setSize(tier.shadow);
     shadows.setTaps(tier.shadowTaps);
     grass.setCount(tier.grass);
-    forest.setLodScale(tier.lodScale, tier.treeBudget);
+    forest.setLodScale(tier.lodScale, tier.treeBudget, tier.cardBudget);
     fireflies.setCount(tier.fireflies);
   }
 

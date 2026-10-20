@@ -10,11 +10,13 @@ Tiny Glade 风格的林中小屋微缩场景，面向手机的网页展示。拖
 
 ```
 house.blend            Blender 场景（由 scripts/build_scene.py 生成）
+textures/
+  leaf_clusters.png    手绘叶团图集（2×2 格，灰度，硬 alpha），export_web.py 由它生成 leaves.png
 scripts/               Blender 端：场景生成、时间模型、烘焙导出
   common.py            布局、调色板、地形高度函数、建模与材质工具
   build_terrain.py     地形、水塘、岩石、草和花（Geometry Nodes）
   build_house.py       小屋：瓦片、木板、石块逐块建模
-  build_trees.py       树和灌木的变体、森林布置、网页用的三级 LOD 模型
+  build_trees.py       树和灌木的变体、森林布置、网页用的三级 LOD 模型（树干、叶团内核、叶卡）和投影外壳
   build_lighting.py    太阳、月亮、灯笼点光源、天空、相机、渲染与合成器设置
   build_scene.py       依次运行以上模块，保存 house.blend
   timeofday.json       时间模型（Blender 和网页共用）
@@ -46,7 +48,7 @@ npm run preview:lan   # 局域网预览 dist/，手机实测用这个
 
 手机访问电脑上的服务时，Windows 防火墙需要允许 Node.js 在专用网络上的入站连接。
 
-首次加载约 6.9 MB：资源 5.9 MB，脚本 0.8 MB（gzip 后 0.2 MB）。
+首次加载约 6.9 MB：资源 6.0 MB，脚本 0.8 MB（gzip 后 0.2 MB）。
 
 **发布**：推送到 main 分支后，`.github/workflows/pages.yml` 在 GitHub Actions 里执行 `npm ci` 和 `npm run build`，把 `web/dist` 发布到 GitHub Pages（仓库设置里 Pages 的来源为 GitHub Actions）。构建结果使用相对路径，所以能直接放在 `/House/` 子路径下。
 
@@ -64,7 +66,7 @@ npm run preview:lan   # 局域网预览 dist/，手机实测用这个
 | `?hour=17.5` | 初始时刻（0–24） |
 | `?preset=closeup,night` | 初始镜头和 / 或时段：`overview` `closeup` `free`、`day` `dusk` `night` |
 | `?quality=auto\|low\|medium\|high` | 画质（也接受 自动 / 低 / 标准 / 高） |
-| `?debug` | 打开页面时就展开调试面板：FPS 与帧时间、GPU 帧时间（浏览器支持时）、渲染比例与分辨率、绘制调用与三角形、显存估算、阴影重画次数与代价、各级树的数量、草叶数、当前时刻 / 档位 / 镜头 |
+| `?debug` | 打开页面时就展开调试面板：FPS 与帧时间、GPU 帧时间（浏览器支持时）、渲染比例与分辨率、绘制调用与三角形、显存估算、阴影重画次数与代价、各级树的数量、草叶数、叶卡数、当前时刻 / 档位 / 镜头 |
 
 ### 画质档位
 
@@ -76,13 +78,15 @@ npm run preview:lan   # 局域网预览 dist/，手机实测用这个
 | 景深 | 关 | ¼ 像素，20 采样 | ¼ 像素，40 采样 |
 | 泛光取高光的分辨率 | ¼ | ½ | ½ |
 | 草叶 | 25 000 | 60 000 | 200 000 |
-| 树的三角形上限 | 70 k | 170 k | 450 k |
+| 树的三角形上限 | 60 k | 70 k | 180 k |
+| 叶卡上限 | 10 000 | 20 000 | 40 000 |
+| 叶卡边缘 | alpha 测试 | alpha-to-coverage | alpha-to-coverage |
 | 萤火虫 | 120 | 250 | 400 |
 | 风动 | 关 | 开 | 开 |
 
 - **自动**：手机和平板选标准，弱 GPU 或内存 / 核数少的手机选低；电脑选高，集成显卡选标准。
 - **动态分辨率**：按帧时间在像素比上下限之间调整，手机以 30 fps、电脑以 60 fps 为目标。
-- 标准档的预算：任一预设镜头约 53 万三角形、45–60 次绘制、贴图和渲染目标约 56 MB。
+- 标准档的预算：任一预设镜头约 43 万三角形、67–81 次场景绘制、至多 2 万张叶卡、贴图和渲染目标约 61 MB。
 
 ## Blender 管线
 
@@ -160,7 +164,7 @@ emission  = 窗玻璃和灯罩随 lamp 变化的自发光
 | --- | --- |
 | 小屋、岩石、花、睡莲叶、芦苇 | 上式；烘焙层在顶点色里，阴影逐像素；窗玻璃和灯罩有随时间变化的自发光 |
 | 地形 | 上式，烘焙层取自地形贴图；有草的地方按等效的“草地模型”着色，叠加条纹噪声 |
-| 树和灌木 | 逐顶点：球面转移法线的 Lambert、阴影、天空 / 地面半球光、叶间散射、叶片透光与逆光辉光、夜里灯笼的实时点光源 |
+| 树和灌木 | 逐顶点：球面转移法线的 Lambert、阴影、天空 / 地面半球光、叶间散射、叶片透光与逆光辉光、夜里灯笼的实时点光源。叶卡每个角用向该角弯曲的树冠法线照明，叶团根部略暗；反照率 = 顶点色 × leaves.png 的灰度 ÷ 图集平均灰度 |
 | 草叶 | 浏览器里按 grass.png 的密度用固定种子生成，每片 3 个三角形；光照取根部的烘焙层和阴影 |
 | 水面 | 深度色 × 地形光照 + 当前天空渐变的菲涅尔反射 + 日 / 月光斑 |
 | 天空 | 与 Blender 天空相同的渐变，夜里加星星和月亮 |
@@ -168,22 +172,24 @@ emission  = 窗玻璃和灯罩随 lamp 变化的自发光
 
 ## 渲染
 
-- **阴影**：一张方向光阴影贴图，只在主光方向变化或投影体变化（特写镜头隐藏的树）时重画，场景静止时不重画。投影体是小屋、岩石、花、地形和所有树的最低一级代理模型。
-- **树的细节层级**：每个变体有 L0 / L1 / L2 三级（约 3000 / 1000 / 300 三角形），按距离和屏幕像素密度逐棵选择，逐棵视锥剔除；超过档位的三角形上限时从最远的树开始降级。自由模式隐藏挡住视线的树。
+- **阴影**：一张方向光阴影贴图，只在主光方向变化或投影体变化（特写镜头隐藏的树）时重画，场景静止时不重画。投影体是小屋、岩石、花、地形和每棵树的不透明外壳（`<变体>_Shadow`，树叶沿树冠法线外推）。
+- **树叶**：Tiny Glade 式的叶团卡片。每级模型由树干、暗色的低模叶团内核（不透明，挡住卡片之间的缝）和叶卡组成。叶卡在顶点着色器里围绕卡片中心展开成朝向相机的方片，贴 leaves.png 图集里随机一格（随机水平镜像）；图集的“上”（从叶团根部指向叶尖）转向树冠法线在屏幕上的方向并略向上偏，所以轮廓上的叶团向外张开、正面的叶团朝上，再加每张卡自己的随机旋转。背向相机的卡片在内核后面，随角度逐渐缩小到不画。风吹动整张卡片。每帧先画所有树的树干和内核（由近到远），再画叶卡，最后画场景其余部分，被挡住的卡片和地面在深度测试时就被剔除。
+- **树的细节层级**：每个变体有 L0 / L1 / L2 三级（树 300 / 110 / 40 张叶卡、约 920 / 430 / 180 三角形；灌木 70 / 30 / 12 张叶卡），按距离和屏幕像素密度逐棵选择，逐棵视锥剔除；超过档位的三角形或叶卡上限时从最远的树开始降级。自由模式隐藏挡住视线的树。
 - **后期**：线性 HDR → 泛光 → 一个合成通道：景深，然后按 Blender 合成器的顺序依次加泛光、雾（按深度）、夜色调整、色调、饱和度、暗角、曝光，最后做 Blender 的 AgX 视图变换（Look 为 Base Contrast，用 `src/agx-lut.png` 查表）。景深直接用 Blender 相机的焦距、光圈和对焦距离，在 ¼ 像素的缓冲上计算。
 
 ## 网页资源（`web/public/assets/`）
 
 | 文件 | 内容 |
 | --- | --- |
-| `scene.glb` | +Y 向上，EXT_meshopt_compression + KHR_mesh_quantization。节点 `extras.shade`：`lit`（COLOR_0 = 反照率；COLOR_1 = √(S/skyScale)，a 为 √(Lp/lampScale)；COLOR_2 = √(B/bounceScale)，a 为 Z）、`terrain`（反照率 + 平面 UV）、`treeLOD`（`<变体>_L0/_L1/_L2`）、`water`、`smoke`；相机 CAM_Overview / CAM_Closeup 的 extras 带 `lens_mm`、`sensor_mm`、`fstop`、`target` |
+| `scene.glb` | +Y 向上，EXT_meshopt_compression + KHR_mesh_quantization。节点 `extras.shade`：`lit`（COLOR_0 = 反照率；COLOR_1 = √(S/skyScale)，a 为 √(Lp/lampScale)；COLOR_2 = √(B/bounceScale)，a 为 Z）、`terrain`（反照率 + 平面 UV）、`treeLOD`（`<变体>_L0/_L1/_L2`，图元 M_Bark 树干、M_LeafCore 叶团内核、M_LeafCards 叶卡：每张卡 4 个顶点共用卡片中心为 POSITION，NORMAL 为卡片中心的树冠法线，COLOR_0 为反照率，TEXCOORD_0 为该角的图集 UV，`_CARD` = (角 x, 角 y（+1 指向叶尖）, 半边长 m, 随机旋转 rad)，浮点不量化）、`treeShadow`（`<变体>_Shadow`，投影用的不透明外壳）、`water`、`smoke`；相机 CAM_Overview / CAM_Closeup 的 extras 带 `lens_mm`、`sensor_mm`、`fstop`、`target` |
 | `terrain_sky.png` | 1024²，√(S/skyScale) |
 | `terrain_bounce.png` | 512²，√(B/bounceScale) |
 | `terrain_lamp.png` | 512² 灰度，√(Lp/lampScale) |
 | `terrain_zenith.png` | 512² 灰度，Z |
 | `ground_albedo.png` | 512²，草下地面颜色（sRGB） |
 | `grass.png` | 512²：R = 草密度，G/B = 16 位地形高度 |
-| `manifest.json` | 资源版本（2）、各层的解码系数、草和树的参数与 374 棵树的实例、时间模型、灯笼位置、雾、相机目标与特写走廊、文件大小 |
+| `leaves.png` | 1024² RGBA 叶团图集（2×2 格），由 `textures/leaf_clusters.png` 生成：sRGB 灰度，直通 alpha（源图的硬 alpha 经轻微高斯软化，0.5 处裁切，放大时边缘平滑），叶子颜色向透明区外扩 48 像素、再往外为平均灰度，mipmap 不会把黑色带进叶缘 |
+| `manifest.json` | 资源版本（2）、各层的解码系数、草和树的参数与 374 棵树的实例、叶团图集参数（`trees.leafAtlas`：格数、卡片显示的居中比例、不透明像素的线性平均灰度、alpha 阈值）、时间模型、灯笼位置、雾、相机目标与特写走廊、文件大小 |
 
 所有地形贴图用同一套平面映射 u = (x + 55) / 110、v = (z + 55) / 110（three.js 坐标），PNG 第一行是 v = 0，由 `src/png.js` 直接解码，不经过浏览器的色彩管理。
 
@@ -198,7 +204,7 @@ lighting.js      按时刻更新所有材质共用的光照参数
 shadows.js       主光阴影贴图：投影体、视锥拟合、按需重画
 shaderlib.js     共用 GLSL：光照、阴影查找、噪声、草地模型
 world.js         按 extras.shade 组装场景、材质、阴影、树、草、天空、萤火虫
-forest.js        树的实例、逐棵 LOD 与剔除、特写走廊、阴影代理
+forest.js        树的实例（树干 + 内核、叶卡各一组）、逐棵 LOD 与剔除、三角形和叶卡预算、特写走廊、投影外壳
 cameras.js       预设镜头、自由轨道相机、过渡、横竖屏视野
 post.js          泛光、景深和合成通道
 viewlut.js       AgX 查找表的加载与查找

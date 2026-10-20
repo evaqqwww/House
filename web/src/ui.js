@@ -197,6 +197,7 @@ export function createDebugHud(open) {
       `贴图显存  ${(s.textureBytes / 1048576).toFixed(1)} MB  (渲染目标 ${(s.targetBytes / 1048576).toFixed(1)} MB)`,
       `阴影      ${s.shadowMap}²  重绘 ${s.shadowRenders} 次  ${s.shadowCalls} 次 / ${(s.shadowTriangles / 1e3).toFixed(0)} k  ${s.shadowCpuMs.toFixed(2)} ms`,
       `树 LOD    ${s.treeLods.join(' / ')}  草 ${s.grass.toLocaleString()}`,
+      `叶卡      ${s.cards.toLocaleString()} 张`,
       `时间 ${formatHour(s.hour)}  画质 ${QUALITY_LABEL[s.quality] || s.quality}${s.quality === 'auto' ? `·${QUALITY_LABEL[s.tier]}` : ''}  镜头 ${PRESET_LABEL[s.preset] || s.preset}`,
     ].join('\n');
   }

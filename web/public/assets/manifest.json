@@ -5657,9 +5657,20 @@
    }
   ],
   "lodDistances": [
-   70,
-   140
-  ]
+   120,
+   240
+  ],
+  "leafAtlas": {
+   "file": "leaves.png",
+   "cells": [
+    2,
+    2
+   ],
+   "crop": 0.727,
+   "meanGrey": 0.58112,
+   "alphaCutoff": 0.5,
+   "contrast": 1
+  }
  },
  "timeOfDay": {
   "notes": "Shared time-of-day model of the Blender scene and the web viewer. Hours 0-24; keyframes are interpolated linearly in hour and wrap at 24. Colours are linear RGB. Azimuth in degrees counter-clockwise from +X in Blender world coordinates; light comes FROM azimuth/elevation. sunStrength and moonStrength are Blender sun strengths (W/m2). lamp scales every lamp emitter (lantern glow, window glass, lantern point light) from 0 (off) to 1 (full strength given in lamps). exposure is in EV. tint multiplies the scene-linear image before tone mapping (white balance / night grade). nightShift (0-1) blends dark areas toward lum * nightColor (luminance-preserving, Purkinje-style night grade) with weight nightShift * (1 - smoothstep(nightLow, nightHigh, lum)) on the scene-linear image before tint and exposure, so lamp-lit areas keep their colour.",
@@ -6178,12 +6189,13 @@
   }
  },
  "files": {
-  "scene.glb": 4592588,
-  "terrain_sky.png": 611204,
+  "scene.glb": 4225760,
+  "terrain_sky.png": 611211,
   "terrain_bounce.png": 146292,
   "terrain_lamp.png": 26770,
-  "terrain_zenith.png": 129536,
-  "ground_albedo.png": 94140,
-  "grass.png": 407139
+  "terrain_zenith.png": 129538,
+  "ground_albedo.png": 94146,
+  "grass.png": 407139,
+  "leaves.png": 282184
  }
 }
