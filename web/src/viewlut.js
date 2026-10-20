@@ -30,6 +30,33 @@ export async function loadViewLut() {
   return tex;
 }
 
+// scene-linear Rec.709 -> linear FilmLight E-Gamut (rows; VIEW_GLSL holds the same matrix by columns)
+const REC709_TO_EGAMUT = [
+  [0.5593711, 0.3047833, 0.1358456],
+  [0.0762207, 0.7879718, 0.1358075],
+  [0.0655267, 0.1645468, 0.7699265],
+];
+
+/** The view transform on the CPU (trilinear between the LUT nodes): scene-linear Rec.709 -> display sRGB (0-1). */
+export function viewTransformRGB(lut, c) {
+  const { width: n, data } = lut.image;
+  const n1 = n - 1;
+  const t = REC709_TO_EGAMUT.map((row) => {
+    const e = Math.max(row[0] * c[0] + row[1] * c[1] + row[2] * c[2], 1e-10);
+    return Math.min(Math.max((Math.log2(e) - LUT_LOG_RANGE[0]) / (LUT_LOG_RANGE[1] - LUT_LOG_RANGE[0]), 0), 1) * n1;
+  });
+  const i0 = t.map((x) => Math.min(Math.floor(x), n1 - 1));
+  const f = t.map((x, k) => x - i0[k]);
+  const out = [0, 0, 0];
+  for (let corner = 0; corner < 8; corner++) {
+    const d = [corner & 1, (corner >> 1) & 1, (corner >> 2) & 1];
+    const w = d.reduce((acc, bit, k) => acc * (bit ? f[k] : 1 - f[k]), 1);
+    const o = 4 * (i0[0] + d[0] + n * (i0[1] + d[1] + n * (i0[2] + d[2])));
+    for (let k = 0; k < 3; k++) out[k] += (w * data[o + k]) / 255;
+  }
+  return out;
+}
+
 export const VIEW_GLSL = /* glsl */ `
 uniform highp sampler3D viewLut;
 uniform vec2 viewLutRange; // log2 of the first and last node

@@ -7,7 +7,7 @@ import { createCameraRig, MODE_ALIASES } from './cameras.js';
 import { createResolutionController, detectDevice, QUALITY_ALIASES, TIERS } from './quality.js';
 import { hourDelta } from './timeofday.js';
 import { createGpuTimer } from './gputimer.js';
-import { loadViewLut } from './viewlut.js';
+import { loadViewLut, viewTransformRGB } from './viewlut.js';
 import * as ui from './ui.js';
 
 const params = new URLSearchParams(location.search);
@@ -31,26 +31,15 @@ function readPresets() {
   return { camera, tod };
 }
 
-function srgbHex(c) {
-  const enc = (x) => {
-    const v = Math.min(Math.max(x, 0), 1);
-    const s = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
-    return Math.round(s * 255).toString(16).padStart(2, '0');
-  };
-  return `#${enc(c[0])}${enc(c[1])}${enc(c[2])}`;
-}
-
-/** CSS gradient of the sky colour over the day for the slider track */
-function skyGradient(tod) {
+/** CSS gradient of the visible sky over the day for the slider track: the sky dome a little above the horizon, through
+ * the view transform as the screen shows it */
+function skyGradient(tod, viewLut) {
   const stops = [];
-  for (let h = 0; h <= 24; h += 1) {
+  for (let h = 0; h <= 24; h += 0.5) {
     const s = tod.state(h);
-    const k = s.skyStrength * Math.pow(2, s.exposure) * 1.3;
-    const c = [0, 1, 2].map((i) => {
-      const x = (s.skyZenith[i] * 0.6 + s.skyHorizon[i] * 0.4) * k;
-      return x / (1 + x);
-    });
-    stops.push(`${srgbHex(c)} ${((h / 24) * 100).toFixed(1)}%`);
+    const c = [0, 1, 2].map((i) => s.domeHorizon[i] * 0.4 + s.domeZenith[i] * 0.6);
+    const d = viewTransformRGB(viewLut, c).map((x) => Math.round(Math.min(Math.max(x, 0), 1) * 255).toString(16).padStart(2, '0'));
+    stops.push(`#${d.join('')} ${((h / 24) * 100).toFixed(1)}%`);
   }
   return `linear-gradient(90deg, ${stops.join(', ')})`;
 }
@@ -183,7 +172,7 @@ async function main() {
     onTimePreset: (p) => setTimePreset(p),
     onPreset: (p) => setPreset(p),
     onQuality: (q) => setQuality(q),
-    trackGradient: skyGradient(tod),
+    trackGradient: skyGradient(tod, viewLut),
     touch: device.mobile || (window.matchMedia?.('(pointer: coarse)').matches ?? false),
   });
   ui.reflectState({ quality, resolvedQuality: tier.key, sliderHour });

@@ -1,12 +1,12 @@
 """Time-of-day model (timeofday.json, shared with the web viewer): evaluation, and application to the scene.
 
     import timeofday
-    s = timeofday.state(18.0)          # interpolated keyframe values + sun azimuth/elevation
-    timeofday.apply(18.0)              # sun, moon, sky, lamps, haze, bloom, saturation, exposure
+    s = timeofday.state(18.0)          # interpolated keyframe values + sky dome colours + sun azimuth/elevation
+    timeofday.apply(18.0)              # sun, moon, sky, sky dome, lamps, haze, bloom, saturation, exposure
 
 apply() expects the objects and node names created by build_lighting (Sun, Moon, LanternLight, World_Sky's
-SkyMix / SkyBackground nodes, Comp_Look's Bloom / HazeFactor / HazeMix / NightShift / Tint / Saturation nodes) and the house
-materials M_House_Lantern and M_House_Glass.
+SkyMix / SkyBackground / DomeMix nodes, Comp_Look's Bloom / HazeFactor / HazeColor / NightShift / Tint / Saturation /
+SkyExposure nodes) and the house materials M_House_Lantern and M_House_Glass.
 """
 import json
 import math
@@ -40,16 +40,23 @@ def sun_position(hour, model=None):
     return azimuth, p["maxElevation"] * math.sin(math.pi * f)
 
 
-def state(hour):
-    m = load()
-    h = hour % 24.0
-    keys = sorted(m["keyframes"], key=lambda k: k["hour"])
-    ring = keys + [dict(keys[0], hour=keys[0]["hour"] + 24.0)]
+def _track(keyframes, h):
+    """Keyframe values at hour h: linear in hour between the neighbouring keyframes, wrapping at 24."""
+    keys = sorted(keyframes, key=lambda k: k["hour"])
+    ring = [dict(keys[-1], hour=keys[-1]["hour"] - 24.0)] + keys + [dict(keys[0], hour=keys[0]["hour"] + 24.0)]
     for k0, k1 in zip(ring[:-1], ring[1:]):
         if k0["hour"] <= h <= k1["hour"]:
             break
     t = (h - k0["hour"]) / max(k1["hour"] - k0["hour"], 1e-6)
-    s = {key: _mix(k0[key], k1[key], t) for key in k0 if key != "hour"}
+    return {key: _mix(k0[key], k1[key], t) for key in k0 if key != "hour"}
+
+
+def state(hour):
+    m = load()
+    h = hour % 24.0
+    s = _track(m["keyframes"], h)
+    dome = _track(m["skyDome"]["keyframes"], h)
+    s["domeZenith"], s["domeHorizon"] = dome["zenith"], dome["horizon"]
     s["hour"] = h
     s["sunAzimuth"], s["sunElevation"] = sun_position(h, m)
     s["moon"] = m["moon"]
@@ -101,6 +108,9 @@ def apply(hour, scene=None):
             nodes["SkyMix"].inputs["B"].default_value = (*s["skyZenith"], 1.0)
         if "SkyBackground" in nodes:
             nodes["SkyBackground"].inputs["Strength"].default_value = s["skyStrength"]
+        if "DomeMix" in nodes:
+            nodes["DomeMix"].inputs["A"].default_value = (*s["domeHorizon"], 1.0)
+            nodes["DomeMix"].inputs["B"].default_value = (*s["domeZenith"], 1.0)
 
     lamps = s["lamps"]
     _set_emission("M_House_Lantern", lamps["color"],
@@ -118,13 +128,16 @@ def apply(hour, scene=None):
             n["Bloom"].inputs["Strength"].default_value = s["bloom"]
         if "HazeFactor" in n:
             n["HazeFactor"].inputs["To Max"].default_value = s["hazeAmount"]
-        if "HazeMix" in n:
-            n["HazeMix"].inputs["B"].default_value = (*s["hazeColor"], 1.0)
+        if "HazeColor" in n:
+            n["HazeColor"].inputs["A"].default_value = (*s["hazeColor"], 1.0)
         if "Saturation" in n:
             n["Saturation"].inputs["Saturation"].default_value = s["saturation"]
         if "NightShift" in n:
             n["NightShift"].inputs[1].default_value = s["nightShift"]
         if "Tint" in n:
             n["Tint"].inputs["B"].default_value = (*s["tint"], 1.0)
+        if "SkyExposure" in n:
+            k = 2.0 ** -s["exposure"]
+            n["SkyExposure"].inputs["B"].default_value = (k, k, k, 1.0)
     sc.view_settings.exposure = s["exposure"]
     return s

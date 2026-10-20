@@ -51,7 +51,7 @@ export function createLighting(manifest) {
     uLayerScale: { value: new Vector3(manifest.skyScale, manifest.bounceScale, manifest.lampScale) },
     uSkyZenith: { value: new Color() },
     uSkyHorizon: { value: new Color() },
-    uSkyStrength: { value: 1 },
+    uSkyCurve: { value: model.skyDome.curve }, // dome gradient: horizon -> zenith by t^curve
     uSkyRange: { value: new Vector2().fromArray(SKY_RANGE) },
     uNight: { value: 0 },
     uFireflies: { value: 0 },
@@ -94,9 +94,9 @@ export function createLighting(manifest) {
     U.uSkyUp.value.fromArray(mixc(s.skyHorizon, s.skyZenith, DEFAULTS.skyMixUp)).multiplyScalar(s.skyStrength);
     U.uSkyHorizonRad.value.fromArray(s.skyHorizon).multiplyScalar(s.skyStrength);
     U.uSkyZenithRad.value.fromArray(s.skyZenith).multiplyScalar(s.skyStrength);
-    U.uSkyZenith.value.fromArray(s.skyZenith);
-    U.uSkyHorizon.value.fromArray(s.skyHorizon);
-    U.uSkyStrength.value = s.skyStrength;
+    // the visible sky (dome, water reflections) has colours of its own (timeofday.json skyDome)
+    U.uSkyZenith.value.fromArray(s.domeZenith);
+    U.uSkyHorizon.value.fromArray(s.domeHorizon);
 
     const sinEl = Math.max(Math.sin((s.sunElevation * Math.PI) / 180), 0);
     const b = U.uBounceRad.value;

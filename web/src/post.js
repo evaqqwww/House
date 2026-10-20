@@ -1,11 +1,14 @@
 // Post-processing (postprocessing 6.39), linear HDR (HalfFloat) throughout:
 //   RenderPass -> [scene stats] -> BloomPass (highlights at reduced resolution + weighted mip chain, Blender's
 //   kernel) -> EffectPass( MiniatureDof composite, Look ) -> screen (sRGB)
-// Look is the Blender compositor in its order, in one shader: + bloom -> haze (depth: quadratic from start over
-// depth, capped at hazeAmount; background = full) -> night grade (lum = Rec.709 luminance,
-// dark = 1 - smoothstep(low, high, lum), c = mix(c, lum * nightColor, nightShift * dark)) -> * tint -> saturation
-// -> vignette 0.22 -> exposure 2^EV -> Blender's view transform (AgX, look 'AgX - Base Contrast', viewlut.js). Every
-// time-dependent value comes from the time-of-day state.
+// The grade is the Blender compositor in its order: + bloom -> haze (depth: quadratic from start over depth, capped at
+// hazeAmount) -> night grade (lum = Rec.709 luminance, dark = 1 - smoothstep(low, high, lum),
+// c = mix(c, lum * nightColor, nightShift * dark)) -> * tint -> saturation -> exposure 2^EV; the sky dome skips all of
+// it but the bloom. Scene and sky mix by the frame's alpha (the sky dome writes 0, everything else 1, transparent
+// objects their coverage; the multisample resolve turns it into the coverage at edges). Look then applies the vignette
+// 0.22 and Blender's view transform (AgX, look 'AgX - Base Contrast', viewlut.js). With depth of field the grade runs
+// before the blur (on the sharp pixel and in the gather's prefilter), so blurred edges against the sky mix colours
+// that are already graded. Every time-dependent value comes from the time-of-day state.
 // MiniatureDof: thin-lens circle of confusion from the Blender cameras, gathered at reduced resolution with a fixed
 // number of samples on a golden-angle spiral (rotated per pixel) from a mip-mapped copy of the image; each sample
 // counts where its own CoC reaches the pixel, so blurred foreground spreads over sharp pixels and sharp foreground is
@@ -185,55 +188,73 @@ class BloomPass extends Pass {
 }
 
 // ---------------------------------------------------------------- look (Blender compositor + view transform)
-const lookFrag = /* glsl */ `
+// scene-linear colour c at uv, view distance dist (m), scene weight w (1 scene, 0 sky dome) -> graded scene-linear
+const GRADE_GLSL = /* glsl */ `
 uniform sampler2D bloomCore;
 uniform sampler2D bloomWide;
-uniform vec2 bloomWeights; // core, chain (Blender's glow weights * bloom strength)
+uniform vec2 bloomWeights;
 uniform vec3 hazeColor;
 uniform vec3 hazeParams; // start, depth, amount
-uniform vec2 tanHalfFov;
+uniform vec2 tanHalfFov; // tan of the half field of view, x and y
 uniform vec3 nightColor;
 uniform vec2 nightRange;
 uniform float nightShift;
 uniform vec3 tint;
 uniform float saturation;
+uniform float exposure;
+// view distance of a pixel at uv whose planar view depth is z
+float viewDistance( const in vec2 uv, const in float z ) {
+  return z * length( vec3( ( uv * 2.0 - 1.0 ) * tanHalfFov, 1.0 ) );
+}
+vec3 grade( vec3 c, const in vec2 uv, const in float dist, const in float w ) {
+  c = max( c, vec3( 0.0 ) ) + texture2D( bloomCore, uv ).rgb * bloomWeights.x + texture2D( bloomWide, uv ).rgb * bloomWeights.y;
+  // haze (Blender mist, quadratic)
+  float m = clamp( ( dist - hazeParams.x ) / hazeParams.y, 0.0, 1.0 );
+  vec3 s = mix( c, hazeColor, hazeParams.z * m * m );
+  // night grade: dark areas toward lum * nightColor, lamp-lit areas keep their colour
+  float lum = dot( s, vec3( 0.2126, 0.7152, 0.0722 ) );
+  float dark = 1.0 - smoothstep( nightRange.x, nightRange.y, lum );
+  s = mix( s, lum * nightColor, nightShift * dark );
+  s *= tint;
+  // HSV saturation scale (hue and value kept), as Blender's Hue/Saturation node
+  float v = max( s.r, max( s.g, s.b ) );
+  s = max( v - ( v - s ) * saturation, vec3( 0.0 ) );
+  // the sky dome keeps the colours timeofday.json gives it
+  return mix( c, s * exposure, clamp( w, 0.0, 1.0 ) );
+}
+`;
+
+// vignette and view transform; GRADE: the grade first (no depth of field: nothing graded the pixel before)
+const lookFrag = /* glsl */ `
 uniform float vignette;
 uniform vec2 vignetteAspect; // drawing-buffer size / its longer side
 uniform vec2 vignetteRamp; // radii (in units of the longer side) where the darkening starts and is full
-uniform float exposure;
-
 ${VIEW_GLSL}
+#ifdef GRADE
+${GRADE_GLSL}
+#endif
 
 void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor ) {
-  vec3 c = max( inputColor.rgb, vec3( 0.0 ) ) + texture2D( bloomCore, uv ).rgb * bloomWeights.x + texture2D( bloomWide, uv ).rgb * bloomWeights.y;
-  // haze (Blender mist, quadratic)
-  float f = hazeParams.z;
-  if ( depth < 0.999999 ) {
-    float viewZ = getViewZ( depth );
-    vec2 ndc = uv * 2.0 - 1.0;
-    float dist = -viewZ * length( vec3( ndc * tanHalfFov, 1.0 ) );
-    float m = clamp( ( dist - hazeParams.x ) / hazeParams.y, 0.0, 1.0 );
-    f = hazeParams.z * m * m;
-  }
-  c = mix( c, hazeColor, f );
-  // night grade: dark areas toward lum * nightColor, lamp-lit areas keep their colour
-  float lum = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
-  float dark = 1.0 - smoothstep( nightRange.x, nightRange.y, lum );
-  c = mix( c, lum * nightColor, nightShift * dark );
-  c *= tint;
-  // HSV saturation scale (hue and value kept), as Blender's Hue/Saturation node
-  float v = max( c.r, max( c.g, c.b ) );
-  c = max( v - ( v - c ) * saturation, vec3( 0.0 ) );
+  vec3 c = inputColor.rgb;
+  #ifdef GRADE
+    c = grade( c, uv, viewDistance( uv, -getViewZ( depth ) ), inputColor.a );
+  #endif
   // Blender: mix(image, black, vignette * (1 - blur(ellipse mask))); its mask (size 0.95, blurred 300 px) is a disc
   // of radius 0.475 x the image width: measured on a flat image, 1 - 0.22 * smoothstep(0.37, 0.58, r / width)
   vec2 p = ( uv - 0.5 ) * vignetteAspect;
   c *= 1.0 - vignette * smoothstep( vignetteRamp.x, vignetteRamp.y, length( p ) );
-  outputColor = vec4( viewTransform( c * exposure ), inputColor.a );
+  outputColor = vec4( viewTransform( c ), 1.0 ); // opaque: the sky dome's alpha 0 never reaches the page
 }`;
 
 class LookEffect extends Effect {
-  constructor(uniforms) {
-    super('LookEffect', lookFrag, { attributes: EffectAttribute.DEPTH, blendFunction: BlendFunction.SRC, uniforms });
+  /** @param {boolean} gradeHere  run the grade (false when the depth of field composite has graded the pixel) */
+  constructor(uniforms, gradeHere) {
+    super('LookEffect', lookFrag, {
+      attributes: EffectAttribute.DEPTH,
+      blendFunction: BlendFunction.SRC,
+      uniforms,
+      defines: gradeHere ? new Map([['GRADE', '1']]) : new Map(),
+    });
   }
 }
 
@@ -263,16 +284,19 @@ float cocOf( const in float z ) {
 
 const FULLSCREEN_VERT = 'varying vec2 vUv; void main() { vUv = position.xy * 0.5 + 0.5; gl_Position = vec4( position.xy, 1.0, 1.0 ); }';
 
-// colour + signed CoC at the gather resolution (one bilinear colour tap covers the 2 x 2 pixels of a texel)
+// graded colour + signed CoC at the gather resolution (one bilinear colour tap covers the 2 x 2 pixels of a texel)
 const dofPrefilterFrag = /* glsl */ `
 #include <common>
 #include <packing>
 uniform sampler2D inputBuffer;
 uniform highp sampler2D depthBuffer;
 ${COC_GLSL}
+${GRADE_GLSL}
 varying vec2 vUv;
 void main() {
-  gl_FragColor = vec4( texture2D( inputBuffer, vUv ).rgb, cocSigned( linearZ( texture2D( depthBuffer, vUv ).r ) ) );
+  vec4 c = texture2D( inputBuffer, vUv );
+  float z = linearZ( texture2D( depthBuffer, vUv ).r );
+  gl_FragColor = vec4( grade( c.rgb, vUv, viewDistance( vUv, z ), c.a ), cocSigned( z ) );
 }`;
 
 // largest foreground CoC per tile (TILE x TILE prefilter texels), read from prefilter mip 1
@@ -345,18 +369,21 @@ void main() {
 const dofCompositeFrag = /* glsl */ `
 uniform sampler2D blurBuffer;
 ${COC_GLSL}
+${GRADE_GLSL}
 void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor ) {
   vec4 b = texture2D( blurBuffer, uv );
-  float cc = cocOf( linearZ( depth ) );
-  float k = smoothstep( 0.6, 2.2, max( cc, b.a ) );
-  outputColor = vec4( mix( inputColor.rgb, b.rgb, k ), inputColor.a );
+  float z = linearZ( depth );
+  float k = smoothstep( 0.6, 2.2, max( cocOf( z ), b.a ) );
+  vec3 sharp = grade( inputColor.rgb, uv, viewDistance( uv, z ), inputColor.a );
+  outputColor = vec4( mix( sharp, b.rgb, k ), 1.0 );
 }`;
 
 const DOF_TILE = 8; // prefilter texels per tile side
 const DOF_DILATE = 12; // largest dilation (tiles) the shader is compiled for
 
 class MiniatureDofEffect extends Effect {
-  constructor(camera, { resolutionScale = 0.5, samples = 32 } = {}) {
+  /** @param {Map<string, Uniform>} gradeUniforms  the grade's uniforms (shared with Look) */
+  constructor(camera, gradeUniforms, { resolutionScale = 0.5, samples = 32 } = {}) {
     const shared = {
       cameraNearDof: new Uniform(camera.near),
       cameraFarDof: new Uniform(camera.far),
@@ -367,7 +394,7 @@ class MiniatureDofEffect extends Effect {
     super('MiniatureDofEffect', dofCompositeFrag, {
       attributes: EffectAttribute.DEPTH,
       blendFunction: BlendFunction.SRC,
-      uniforms: new Map([['blurBuffer', new Uniform(null)], ...Object.entries(shared)]),
+      uniforms: new Map([['blurBuffer', new Uniform(null)], ...Object.entries(shared), ...gradeUniforms]),
     });
     this.camera = camera;
     this.shared = shared;
@@ -391,7 +418,9 @@ class MiniatureDofEffect extends Effect {
     this.uniforms.get('blurBuffer').value = this.renderTarget.texture;
     const material = (name, fragmentShader, uniforms, defines = {}) =>
       new ShaderMaterial({ name, defines, uniforms, vertexShader: FULLSCREEN_VERT, fragmentShader, blending: NoBlending, depthWrite: false, depthTest: false, toneMapped: false });
-    this.prefilterMaterial = material('MiniatureDofPrefilter', dofPrefilterFrag, { inputBuffer: { value: null }, depthBuffer: { value: null }, ...shared });
+    this.prefilterMaterial = material('MiniatureDofPrefilter', dofPrefilterFrag, {
+      inputBuffer: { value: null }, depthBuffer: { value: null }, ...shared, ...Object.fromEntries(gradeUniforms),
+    });
     this.tileMaterial = material('MiniatureDofTiles', dofTileFrag, { prefilter: { value: this.prefilter.texture }, prefilterSize: { value: new Vector2() } }, { TILE: DOF_TILE });
     this.dilateMaterial = material('MiniatureDofDilate', dofDilateFrag, { tiles: { value: null }, tileStep: { value: new Vector2() }, reach: { value: 1 } }, { DILATE: DOF_DILATE });
     this.gatherMaterial = material(
@@ -501,7 +530,7 @@ export function createPost(renderer, scene, camera, lighting, manifest, tier, vi
   composer.addPass(bloom);
 
   const ng = model.nightGrade;
-  const U = new Map([
+  const G = new Map([
     ['bloomCore', new Uniform(bloom.core)],
     ['bloomWide', new Uniform(bloom.texture)],
     ['bloomWeights', new Uniform(new Vector2())],
@@ -513,17 +542,20 @@ export function createPost(renderer, scene, camera, lighting, manifest, tier, vi
     ['nightShift', new Uniform(0)],
     ['tint', new Uniform(new Vector3(1, 1, 1))],
     ['saturation', new Uniform(1)],
+    ['exposure', new Uniform(1)],
+  ]);
+  const L = new Map([
     ['vignette', new Uniform(0.22)],
     ['vignetteAspect', new Uniform(new Vector2(1, 0.5625))],
     ['vignetteRamp', new Uniform(new Vector2(0.37, 0.58))],
-    ['exposure', new Uniform(1)],
     ['viewLut', new Uniform(viewLut)],
     ['viewLutRange', new Uniform(new Vector2().fromArray(LUT_LOG_RANGE))],
   ]);
-  // two EffectPasses (with / without depth of field) share the Look uniforms
-  const dof = new MiniatureDofEffect(camera, { resolutionScale: tier.dofScale, samples: tier.dofSamples });
-  const passDof = new EffectPass(camera, dof, new LookEffect(U));
-  const passFlat = new EffectPass(camera, new LookEffect(U));
+  const U = new Map([...G, ...L]); // every uniform the time of day and the frame update, by name
+  // two EffectPasses (with / without depth of field) share the uniforms; with depth of field the DOF effect grades
+  const dof = new MiniatureDofEffect(camera, G, { resolutionScale: tier.dofScale, samples: tier.dofSamples });
+  const passDof = new EffectPass(camera, dof, new LookEffect(L, false));
+  const passFlat = new EffectPass(camera, new LookEffect(new Map([...G, ...L]), true));
   passDof.dithering = true;
   passFlat.dithering = true;
   composer.addPass(passDof);

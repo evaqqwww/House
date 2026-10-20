@@ -5662,7 +5662,7 @@
   ]
  },
  "timeOfDay": {
-  "notes": "Shared time-of-day model of the Blender scene and the web viewer. Hours 0-24; keyframes are interpolated linearly in hour and wrap at 24. Colours are linear RGB. Azimuth in degrees counter-clockwise from +X in Blender world coordinates; light comes FROM azimuth/elevation. sunStrength and moonStrength are Blender sun strengths (W/m2). lamp scales every lamp emitter (lantern glow, window glass, lantern point light) from 0 (off) to 1 (full strength given in lamps). exposure is in EV. tint multiplies the scene-linear image before tone mapping (white balance / night grade). nightShift (0-1) blends dark areas toward lum * nightColor (luminance-preserving, Purkinje-style night grade) with weight nightShift * (1 - smoothstep(nightLow, nightHigh, lum)) on the scene-linear image before tint and exposure, so lamp-lit areas keep their colour.",
+  "notes": "Shared time-of-day model of the Blender scene and the web viewer. Hours 0-24; keyframes are interpolated linearly in hour and wrap at 24. Colours are linear RGB. Azimuth in degrees counter-clockwise from +X in Blender world coordinates; light comes FROM azimuth/elevation. sunStrength and moonStrength are Blender sun strengths (W/m2). lamp scales every lamp emitter (lantern glow, window glass, lantern point light) from 0 (off) to 1 (full strength given in lamps). exposure is in EV. tint multiplies the scene-linear image before tone mapping (white balance / night grade). nightShift (0-1) blends dark areas toward lum * nightColor (luminance-preserving, Purkinje-style night grade) with weight nightShift * (1 - smoothstep(nightLow, nightHigh, lum)) on the scene-linear image before tint and exposure, so lamp-lit areas keep their colour. skyDome holds the colours of the visible sky (camera and reflection rays) by hour, linear RGB, interpolated like the keyframes; the light the sky casts on the scene comes from skyZenith / skyHorizon. The dome mixes horizon to zenith by t^curve, t = the gradient position of the view direction height. In the look the sky dome gets only bloom, the vignette and the view transform (no haze, night grade, tint, saturation or exposure), so its colours are what the screen shows away from the corners.",
   "defaultHour": 9,
   "presets": {
    "day": 13,
@@ -5705,6 +5705,180 @@
    ],
    "low": 0.03,
    "high": 0.25
+  },
+  "skyDome": {
+   "curve": 0.5,
+   "keyframes": [
+    {
+     "hour": 0,
+     "zenith": [
+      0.0202,
+      0.00001,
+      0.5577
+     ],
+     "horizon": [
+      0.0137,
+      0.0202,
+      1.1637
+     ]
+    },
+    {
+     "hour": 4.3,
+     "zenith": [
+      0.0202,
+      0.00001,
+      0.5577
+     ],
+     "horizon": [
+      0.0137,
+      0.0202,
+      1.1637
+     ]
+    },
+    {
+     "hour": 5,
+     "zenith": [
+      0.0401,
+      0.0108,
+      0.4252
+     ],
+     "horizon": [
+      0.1587,
+      0.0805,
+      0.819
+     ]
+    },
+    {
+     "hour": 5.6,
+     "zenith": [
+      0.0461,
+      0.056,
+      0.3618
+     ],
+     "horizon": [
+      1.6124,
+      0.3354,
+      0.1399
+     ]
+    },
+    {
+     "hour": 6.3,
+     "zenith": [
+      0.0451,
+      0.1391,
+      0.3901
+     ],
+     "horizon": [
+      2.9893,
+      1.0035,
+      0.075
+     ]
+    },
+    {
+     "hour": 7.3,
+     "zenith": [
+      0.0346,
+      0.2198,
+      0.3622
+     ],
+     "horizon": [
+      0.2925,
+      0.7985,
+      0.6112
+     ]
+    },
+    {
+     "hour": 8.5,
+     "zenith": [
+      0.0272,
+      0.2445,
+      0.344
+     ],
+     "horizon": [
+      0.0308,
+      0.2746,
+      0.3736
+     ]
+    },
+    {
+     "hour": 16,
+     "zenith": [
+      0.0272,
+      0.2445,
+      0.344
+     ],
+     "horizon": [
+      0.0308,
+      0.2746,
+      0.3736
+     ]
+    },
+    {
+     "hour": 17.1,
+     "zenith": [
+      0.0373,
+      0.2162,
+      0.342
+     ],
+     "horizon": [
+      1.1531,
+      0.7358,
+      0.1724
+     ]
+    },
+    {
+     "hour": 17.9,
+     "zenith": [
+      0.0481,
+      0.1309,
+      0.368
+     ],
+     "horizon": [
+      1.9882,
+      0.3477,
+      0.00001
+     ]
+    },
+    {
+     "hour": 18.6,
+     "zenith": [
+      0.0522,
+      0.0502,
+      0.4104
+     ],
+     "horizon": [
+      1.288,
+      0.118,
+      0.1606
+     ]
+    },
+    {
+     "hour": 19.3,
+     "zenith": [
+      0.0379,
+      0.0038,
+      0.5066
+     ],
+     "horizon": [
+      0.2897,
+      0.0847,
+      0.8091
+     ]
+    },
+    {
+     "hour": 20.1,
+     "zenith": [
+      0.0109,
+      0.00004,
+      0.6198
+     ],
+     "horizon": [
+      0.0316,
+      0.025,
+      1.1625
+     ]
+    }
+   ]
   },
   "keyframes": [
    {
@@ -6138,7 +6312,7 @@
   ]
  },
  "haze": {
-  "start": 38,
+  "start": 70,
   "depth": 70
  },
  "cameras": {

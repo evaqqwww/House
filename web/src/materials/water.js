@@ -1,7 +1,7 @@
 // "water": pond surface. COLOR_0.rgb = depth tint (albedo), COLOR_0.a = opacity (from Blender).
 // Body = tint lit like the terrain under it (baked layers + direct light with the shadow map); Fresnel reflection
-// of the time-of-day sky gradient (low reflected rays see the forest rim, lit by the current light) and glints of
-// the sun or moon on animated ripples.
+// of the time-of-day sky dome (timeofday.json skyDome, the visible sky; low reflected rays see the forest rim, lit by
+// the current light) and glints of the sun or moon on animated ripples.
 import { Color, ShaderMaterial } from 'three';
 import { LIGHT_PARS, NOISE, SHADOW_PARS } from '../shaderlib.js';
 import { SKY_GLSL } from './sky.js';

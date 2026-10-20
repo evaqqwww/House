@@ -21,7 +21,7 @@ SKY_HORIZON = (*_DEFAULT["skyHorizon"], 1.0)
 SKY_STRENGTH = _DEFAULT["skyStrength"]
 
 HAZE_COLOR = (*_DEFAULT["hazeColor"], 1.0)
-MIST_START = 38.0
+MIST_START = 70.0
 MIST_DEPTH = 70.0
 HAZE_AMOUNT = _DEFAULT["hazeAmount"]
 
@@ -73,6 +73,8 @@ def _lantern_light(coll):
 
 
 def _world(sc):
+    """World_Sky: the sky gradient lights the scene (SkyMix, SkyBackground); camera and reflection (glossy) rays see
+    the sky dome colours instead (DomeMix, mixed by t^curve; timeofday.json skyDome)."""
     world = bpy.data.worlds.get("World_Sky") or bpy.data.worlds.new("World_Sky")
     sc.world = world
     world.use_nodes = True
@@ -91,12 +93,33 @@ def _world(sc):
     bg = nt.nodes.new("ShaderNodeBackground")
     bg.name = "SkyBackground"
     bg.inputs["Strength"].default_value = SKY_STRENGTH
+    curve = nt.nodes.new("ShaderNodeMath")
+    curve.operation = "POWER"
+    curve.inputs[1].default_value = TOD["skyDome"]["curve"]
+    dome = nt.nodes.new("ShaderNodeMix")
+    dome.name = "DomeMix"
+    dome.data_type = "RGBA"
+    dome_bg = nt.nodes.new("ShaderNodeBackground")
+    dome_bg.inputs["Strength"].default_value = 1.0
+    path = nt.nodes.new("ShaderNodeLightPath")
+    seen = nt.nodes.new("ShaderNodeMath")
+    seen.operation = "ADD"
+    seen.use_clamp = True
+    shader = nt.nodes.new("ShaderNodeMixShader")
     out = nt.nodes.new("ShaderNodeOutputWorld")
     nt.links.new(coord.outputs["Generated"], sep.inputs["Vector"])
     nt.links.new(sep.outputs["Z"], ramp.inputs["Value"])
     nt.links.new(ramp.outputs["Result"], mixc.inputs["Factor"])
     nt.links.new(mixc.outputs["Result"], bg.inputs["Color"])
-    nt.links.new(bg.outputs["Background"], out.inputs["Surface"])
+    nt.links.new(ramp.outputs["Result"], curve.inputs[0])
+    nt.links.new(curve.outputs["Value"], dome.inputs["Factor"])
+    nt.links.new(dome.outputs["Result"], dome_bg.inputs["Color"])
+    nt.links.new(path.outputs["Is Camera Ray"], seen.inputs[0])
+    nt.links.new(path.outputs["Is Glossy Ray"], seen.inputs[1])
+    nt.links.new(seen.outputs["Value"], shader.inputs["Fac"])
+    nt.links.new(bg.outputs["Background"], shader.inputs[1])
+    nt.links.new(dome_bg.outputs["Background"], shader.inputs[2])
+    nt.links.new(shader.outputs["Shader"], out.inputs["Surface"])
     world.mist_settings.start = MIST_START
     world.mist_settings.depth = MIST_DEPTH
     world.mist_settings.falloff = "QUADRATIC"
@@ -167,14 +190,20 @@ def _render_settings(sc, samples):
     c.blur_glossy = 1.0
     sc.render.resolution_x, sc.render.resolution_y = 1920, 1080
     sc.render.resolution_percentage = 100
-    sc.render.film_transparent = False
+    sc.render.film_transparent = True              # the compositor puts the sky back from the Environment pass
     sc.view_settings.view_transform = "AgX"
     sc.view_settings.look = LOOK
     sc.view_settings.exposure = 0.0
     sc.view_layers[0].use_pass_mist = True
+    sc.view_layers[0].use_pass_environment = True
 
 
 def _compositor(sc):
+    """Comp_Look. The film is transparent: Image is the scene alone (premultiplied, alpha = coverage, anti-aliased and
+    depth-of-field blurred like the colour) and the Environment pass the sky dome seen past it. The scene takes bloom
+    (of the whole frame), haze, night grade, tint, colour balance and saturation; the sky dome keeps the colours
+    timeofday.json gives it (SkyExposure = 2^-exposure, set by timeofday.apply, cancels the exposure of the view
+    settings); both add up before the vignette."""
     ng = bpy.data.node_groups.get("Comp_Look")
     if ng is not None:
         bpy.data.node_groups.remove(ng)
@@ -185,14 +214,31 @@ def _compositor(sc):
     rl = n.new("CompositorNodeRLayers")
     rl.location = (-900, 0)
 
+    def mix(blend, a, b, location, factor=1.0):
+        node = n.new("ShaderNodeMix")
+        node.location = location
+        node.data_type = "RGBA"
+        node.blend_type = blend
+        node.inputs["Factor"].default_value = factor
+        for socket, src in (("A", a), ("B", b)):
+            if isinstance(src, tuple):
+                node.inputs[socket].default_value = src
+            else:
+                ln.new(src, node.inputs[socket])
+        return node
+
+    env = rl.outputs["Environment"]
+    frame = mix("ADD", rl.outputs["Image"], env, (-800, 150))           # scene + sky dome
     glare = n.new("CompositorNodeGlare")
     glare.name = "Bloom"
-    glare.location = (-650, 0)
+    glare.location = (-650, 150)
     glare.inputs["Type"].default_value = "Bloom"
     glare.inputs["Threshold"].default_value = 0.9
     glare.inputs["Strength"].default_value = 0.18
     glare.inputs["Size"].default_value = 0.6
-    ln.new(rl.outputs["Image"], glare.inputs["Image"])
+    ln.new(frame.outputs["Result"], glare.inputs["Image"])
+    bloom = mix("SUBTRACT", glare.outputs["Image"], frame.outputs["Result"], (-500, 150))
+    scene = mix("ADD", rl.outputs["Image"], bloom.outputs["Result"], (-500, 0))
 
     haze_fac = n.new("ShaderNodeMapRange")
     haze_fac.name = "HazeFactor"
@@ -200,13 +246,16 @@ def _compositor(sc):
     haze_fac.inputs["To Max"].default_value = HAZE_AMOUNT
     ln.new(rl.outputs["Mist"], haze_fac.inputs["Value"])
 
+    # the scene is premultiplied: the haze colour is weighted by the coverage
+    haze_col = mix("MULTIPLY", HAZE_COLOR, rl.outputs["Alpha"], (-650, -150))
+    haze_col.name = "HazeColor"
     haze = n.new("ShaderNodeMix")
     haze.name = "HazeMix"
     haze.location = (-400, 0)
     haze.data_type = "RGBA"
-    haze.inputs["B"].default_value = HAZE_COLOR
     ln.new(haze_fac.outputs["Result"], haze.inputs["Factor"])
-    ln.new(glare.outputs["Image"], haze.inputs["A"])
+    ln.new(scene.outputs["Result"], haze.inputs["A"])
+    ln.new(haze_col.outputs["Result"], haze.inputs["B"])
 
     # night grade: dark areas move toward lum * night colour, lamp-lit areas keep their colour
     night = TOD["nightGrade"]
@@ -284,11 +333,20 @@ def _compositor(sc):
     vfac.inputs[1].default_value = 0.22
     ln.new(inv.outputs["Value"], vfac.inputs[0])
     ln.new(vfac.outputs["Value"], vig.inputs["Factor"])
-    ln.new(sat.outputs["Image"], vig.inputs["A"])
 
+    sky = mix("MULTIPLY", env, (1.0, 1.0, 1.0, 1.0), (250, 250))
+    sky.name = "SkyExposure"
+    both = mix("ADD", sat.outputs["Image"], sky.outputs["Result"], (400, 0))
+    ln.new(both.outputs["Result"], vig.inputs["A"])
+
+    opaque = n.new("CompositorNodeSetAlpha")
+    opaque.location = (650, 0)
+    opaque.inputs["Type"].default_value = "Replace Alpha"
+    opaque.inputs["Alpha"].default_value = 1.0
+    ln.new(vig.outputs["Result"], opaque.inputs["Image"])
     out = n.new("NodeGroupOutput")
-    out.location = (750, 0)
-    ln.new(vig.outputs["Result"], out.inputs[0])
+    out.location = (850, 0)
+    ln.new(opaque.outputs["Image"], out.inputs[0])
     sc.compositing_node_group = ng
 
 
