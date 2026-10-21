@@ -47,6 +47,41 @@ body {
   touch-action: none;
 }
 
+.sheep-hearts {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sheep-heart-burst {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.sheep-heart {
+  position: absolute;
+  height: auto;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+  animation: sheep-heart-float 1.35s ease-out var(--heart-delay) both;
+  will-change: transform, opacity;
+}
+
+@keyframes sheep-heart-float {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5) rotate(-8deg); }
+  12% { opacity: 1; }
+  65% { opacity: 0.95; }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--heart-drift)), calc(-50% - var(--heart-rise))) scale(1.08) rotate(6deg);
+  }
+}
+
 [hidden] {
   display: none !important;
 }

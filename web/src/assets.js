@@ -16,11 +16,13 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { decodePNG, toRed, toRGBA } from './png.js';
 
-const FILES = ['scene.glb', 'terrain_sky.png', 'terrain_bounce.png', 'terrain_lamp.png', 'terrain_zenith.png', 'ground_albedo.png', 'grass.png'];
+const FILES = ['scene.glb', 'sheep.glb', 'sheep-navigation.json', 'terrain_sky.png', 'terrain_bounce.png', 'terrain_lamp.png', 'terrain_zenith.png', 'ground_albedo.png', 'grass.png'];
 
-async function fetchWithProgress(url, onBytes) {
+async function fetchWithProgress(url, onBytes, onSize) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const sizeHint = Number(res.headers.get('content-length'));
+  if (sizeHint > 0) onSize(sizeHint);
   if (!res.body) {
     const buf = await res.arrayBuffer();
     onBytes(buf.byteLength);
@@ -83,24 +85,36 @@ export async function loadAssets(base, onProgress, maxAnisotropy = 4) {
   const files = manifest.files['ground_cover.png'] ? [...FILES, 'ground_cover.png'] : FILES;
 
   const expected = {};
-  for (const f of files) expected[f] = Number(manifest.files[f]) || 1;
-  const total = Object.values(expected).reduce((a, b) => a + b, 0);
+  for (const f of files) expected[f] = Math.max(0, Number(manifest.files[f]) || 0);
   const got = Object.fromEntries(files.map((f) => [f, 0]));
+  const completed = new Set();
+  let progress = 0;
   const report = () => {
-    const sum = files.reduce((a, f) => a + Math.min(got[f], expected[f]), 0);
-    onProgress(0.85 * (sum / total), `下载 ${(sum / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`);
+    const downloaded = files.reduce((a, f) => a + got[f], 0);
+    const total = files.reduce((a, f) => a + (expected[f] || Math.max(got[f], 1)), 0);
+    const sum = files.reduce((a, f) => a + Math.min(got[f], expected[f] || got[f]), 0);
+    progress = Math.max(progress, completed.size === files.length ? 1 : Math.min(sum / total, 0.99));
+    const totalText = files.every((f) => expected[f] > 0) ? ` / ${(total / 1048576).toFixed(1)}` : '';
+    onProgress(0.85 * progress, `下载 ${(downloaded / 1048576).toFixed(1)}${totalText} MB`);
   };
   const bump = (file) => (n) => {
     got[file] += n;
     report();
   };
-  const buffers = await Promise.all(files.map((f) => fetchWithProgress(base + f, bump(f))));
+  const buffers = await Promise.all(files.map(async (f) => {
+    const buffer = await fetchWithProgress(base + f, bump(f), (size) => { expected[f] = size; });
+    expected[f] = buffer.byteLength;
+    completed.add(f);
+    report();
+    return buffer;
+  }));
   const byName = Object.fromEntries(files.map((f, i) => [f, buffers[i]]));
 
   onProgress(0.88, '解析场景');
   await MeshoptDecoder.ready;
-  const [gltf, skyImg, bounceImg, lampImg, zenithImg, albedoImg, grassImg] = await Promise.all([
+  const [gltf, sheepGltf, skyImg, bounceImg, lampImg, zenithImg, albedoImg, grassImg] = await Promise.all([
     parseGLB(byName['scene.glb'], base),
+    parseGLB(byName['sheep.glb'], base),
     decodePNG(byName['terrain_sky.png']),
     decodePNG(byName['terrain_bounce.png']),
     decodePNG(byName['terrain_lamp.png']),
@@ -108,6 +122,7 @@ export async function loadAssets(base, onProgress, maxAnisotropy = 4) {
     decodePNG(byName['ground_albedo.png']),
     decodePNG(byName['grass.png']),
   ]);
+  const sheepNavigation = JSON.parse(new TextDecoder().decode(byName['sheep-navigation.json']));
   if (grassImg.channels < 3) throw new Error('grass.png must be RGB (R density, G/B height)');
   const coverImg = byName['ground_cover.png'] ? await decodePNG(byName['ground_cover.png']) : grassImg;
 
@@ -131,5 +146,5 @@ export async function loadAssets(base, onProgress, maxAnisotropy = 4) {
     height[i] = grassImg.data[j + 1] * 256 + grassImg.data[j + 2];
   }
   const grassMap = { width: grassImg.width, height: grassImg.height, density, heightCode: height };
-  return { manifest, gltf, textures, grassMap };
+  return { manifest, gltf, sheepGltf, sheepNavigation, textures, grassMap };
 }

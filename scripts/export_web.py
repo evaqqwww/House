@@ -19,7 +19,8 @@ Light layers (light units L: radiance = albedo * L, all linear), combined at run
   Z   zenith fraction: luminance of the light under a grey sky shaped like the zenith weight of the sky gradient
       over luminance(S); skyRad = skyStrength * mix(skyHorizon, skyZenith, Z) per surface (up-facing open ground
       sees mostly zenith colour, walls and rock faces mostly horizon colour)
-Every bake leaves out the grass and the smoke; the terrain bakes also leave out the meadow flowers.
+Every bake leaves out the grass, the smoke and the moving sheep; the terrain bakes also leave out the meadow
+flowers. The sheep model and navigation data are exported separately after the static scene.
 
 Output (manifest.version 2):
   scene.glb          GLB, +Y up, EXT_meshopt_compression + KHR_mesh_quantization after
@@ -84,6 +85,7 @@ import common  # noqa: E402
 import build_lighting  # noqa: E402
 import build_terrain  # noqa: E402
 import build_trees  # noqa: E402
+import build_sheep  # noqa: E402
 import timeofday  # noqa: E402
 
 WEB_DIR = os.path.join(common.ROOT, "web")
@@ -133,6 +135,7 @@ MESHOPT_EXP_BITS = 16          # exporter default 12 bits gives ~2.7 cm steps at
 MESHOPT_QUAT_BITS = 12
 
 FOREST = "Forest"
+DYNAMIC_COLLECTIONS = ("Sheep",)
 TERRAIN = "Terrain"
 TERRAIN_BAKE = "Terrain_Bake"  # the full-resolution terrain, used for baking only
 WATER = "PondWater"
@@ -840,6 +843,14 @@ def _set_hidden(objs, hidden):
         ob.hide_render = hidden
 
 
+def dynamic_objects():
+    """Moving objects must never cast shadows into the static light layers or enter scene.glb."""
+    objs = {ob for name in DYNAMIC_COLLECTIONS if (coll := bpy.data.collections.get(name))
+            for ob in coll.all_objects}
+    objs.update(ob for ob in bpy.data.objects if ob.name.startswith("Sheep_"))
+    return objs
+
+
 def bake_layers(lights, layers, terrain, terrain_hide, verts, samples, res, blur):
     """For every layer: image bake of the terrain (blurred against noise) and vertex bake of `verts`."""
     maps = {}
@@ -1477,6 +1488,8 @@ def _vertex_color_alpha_unlinked(mat_names):
 
 
 def export_glb(path, objs):
+    moving = dynamic_objects()
+    objs = [ob for ob in objs if ob not in moving]
     _select(objs)
     with _vertex_color_alpha_unlinked([s.material.name for s in bpy.data.objects[WATER].material_slots]):
         bpy.ops.export_scene.gltf(
@@ -1586,6 +1599,8 @@ def main():
     out = os.path.abspath(opts["out"])
     os.makedirs(out, exist_ok=True)
     sc = bpy.context.scene
+    moving_visibility = [(ob, ob.hide_render) for ob in dynamic_objects()]
+    _set_hidden([ob for ob, _ in moving_visibility], True)
     common.setup_cycles(samples)
     sc.cycles.use_denoising = False
     sc.cycles.use_adaptive_sampling = False
@@ -1685,9 +1700,18 @@ def main():
     manifest["files"] = {name: os.path.getsize(os.path.join(out, name)) for name in files}
     with open(os.path.join(out, "manifest.json"), "w", newline=LF) as f:
         json.dump(manifest, f, indent=1)
+    for ob, hidden in moving_visibility:
+        ob.hide_render = hidden
+    # export_web returns {file_name: byte_size}; keep moving assets separate from the baked scene.
+    sheep_files = build_sheep.export_web(out)
+    manifest["files"].update(sheep_files)
+    with open(os.path.join(out, "manifest.json"), "w", newline=LF) as f:
+        json.dump(manifest, f, indent=1)
+    _log("sheep", t0, **sheep_files)
     optimized = optimize_glb(glb)
     _log("optimize", t0, **{k: v for k, v in optimized.items() if k != "log"})
-    _log("done", t0, total_bytes=sum(os.path.getsize(os.path.join(out, n)) for n in files + ("manifest.json",)))
+    _log("done", t0, total_bytes=sum(os.path.getsize(os.path.join(out, n))
+                                    for n in (*manifest["files"], "manifest.json")))
 
 
 def build_manifest(tod, state, scales, grass, cams, instances, lod_distances):

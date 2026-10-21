@@ -12,6 +12,7 @@ import { createSkyDome } from './materials/sky.js';
 import { createFireflies } from './materials/fireflies.js';
 import { createShadows, createTreeDepthMaterial } from './shadows.js';
 import { collectTreeTemplates, createForest } from './forest.js';
+import { createSheep } from './sheep.js';
 
 // lit meshes left out of the shadow map
 const NON_CASTERS = /^(LilyPads|Reeds|House_Glass|House_LanternGlow)/;
@@ -82,7 +83,7 @@ function groundFootprint(views, half) {
   return box;
 }
 
-export function buildWorld({ manifest, gltf, textures, grassMap }, lighting, renderer) {
+export function buildWorld({ manifest, gltf, sheepGltf, sheepNavigation, textures, grassMap }, lighting, renderer) {
   const scene = new Scene();
   scene.name = 'Diorama';
   const half = manifest.terrainUV.half;
@@ -174,6 +175,11 @@ export function buildWorld({ manifest, gltf, textures, grassMap }, lighting, ren
   const fireflies = createFireflies(grassMap, manifest, lighting, house, 400);
   scene.add(fireflies.points);
 
+  // The moving model is deliberately outside the static mesh classification and baked-light pipeline.
+  const sheep = createSheep({ gltf: sheepGltf, navigation: sheepNavigation, lighting });
+  scene.add(sheep.root);
+  custom.push(...sheep.materials);
+
   function setTier(tier) {
     for (const m of custom) {
       m.defines = m.defines || {};
@@ -195,5 +201,5 @@ export function buildWorld({ manifest, gltf, textures, grassMap }, lighting, ren
     fireflies.setCount(tier.fireflies);
   }
 
-  return { scene, shadows, forest, grass, fireflies, setTier };
+  return { scene, shadows, forest, grass, fireflies, sheep, setTier };
 }

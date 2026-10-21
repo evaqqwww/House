@@ -16,6 +16,8 @@ scripts/               Blender 端：场景生成、时间模型、烘焙导出
   build_house.py       小屋：瓦片、木板、石块逐块建模
   build_trees.py       树和灌木的变体、森林布置、网页用的三级 LOD 模型
   build_lighting.py    太阳、月亮、灯笼点光源、天空、相机、渲染与合成器设置
+  build_sheep.py       小羊模型与网页独立资源
+  sheep_movement.py    小羊的地形贴合与避障移动
   build_scene.py       依次运行以上模块，保存 house.blend
   timeofday.json       时间模型（Blender 和网页共用）
   timeofday.py         时间模型求值，并应用到 Blender 场景
@@ -56,6 +58,7 @@ npm run preview:lan   # 局域网预览 dist/，手机实测用这个
 - **时间控制**：紧凑居中放在页面底部，平时只显示图标。点按四个图标，分别平滑过渡到 **清晨 07:00 / 白天 13:00 / 黄昏 17:24 / 夜晚 22:00**；长按或左右拖动时显示小型时间窗口，只显示当前时刻，松开后自动收起。向右滑时间前进（顺时针），向左滑时间后退（逆时针）。键盘聚焦时段图标后，方向键显示时间窗口并以 15 分钟、Page Up / Page Down 以 1 小时调整，Home / End 到 0 / 24 时，Escape 收起。
 - **镜头**：在时间控制下方居中排列 **特写 / 总览 / 自由**。特写隐藏挡在镜头前的几棵树；自由模式可单指拖动旋转、双指捏合缩放和拖动平移，电脑上使用鼠标左键、滚轮、右键。在预设镜头下拖动画面直接进入自由模式。图标按钮可用 Tab 聚焦，按 Enter / 空格选择。
 - **画质**：自动（默认）/ 低 / 标准 / 高。
+- **小羊互动**：点击屏幕中的小羊，会从头顶位置飘出金色爱心 UI 并播放 `cute_lamb.ogg`；冷却自动按音频实际时长计算（当前为 1 秒），连续点击不会叠加声音。拖动、长按和双指操作不触发，界面隐藏时也可直接点击小羊；爱心使用屏幕动画，不受景深和场景光照影响。
 - **背景音**：场景启动时立即尝试有声自动播放；若浏览器拦截，首次点击、触摸或按键后自动恢复。白天和夜晚分别循环播放 `daytime.ogg` / `night.ogg`（各 20 秒）。日出、日落前后一小时按场景时间等功率混合，拖动或点按时段时平滑交叉淡化，不重启音轨；切到后台暂停，返回时淡入续播。
 - **帧率**：左上角显示 FPS（最近 120 帧的平均值，每秒刷新两次）、当前档位和渲染像素比，圆点绿色 ≥ 50 fps、黄色 ≥ 28 fps、红色更低；窄屏（≤ 400 px）只显示 FPS。点按它展开 / 收起详细调试面板。
 - **自动隐藏**：5 秒无操作后，图标、画质、帧率和调试信息一起隐藏；再次点击画面恢复，这次点击只唤醒界面。长按、拖动和多指操作期间保持显示；加载与错误提示始终可见。隐藏时可按 Tab 聚焦唤醒区域，再按 Enter / 空格恢复。
@@ -105,6 +108,10 @@ import build_scene; build_scene.build()
 ```
 
 `build_scene.build(parts=["build_lighting"])` 只重建其中几部分。每个 `build_*` 模块的 `build()` 先清空自己的集合再重建，结果完全确定（随机数都有固定种子）。
+
+**小羊**：完整重建会在环境之后生成 `Sheep` 集合；只更新小羊可运行 `build_scene.build(parts=["build_sheep"])`。网页导出会单独生成 `sheep.glb` 和 `sheep-navigation.json`，小羊不参与静态光照烘焙，移动后不会在地面留下烘焙阴影。
+
+小羊参照四视图设计为一体的奶油白梨形身体与隆起的头顶，配紫色椭圆脸部和短耳朵；没有五官、四肢、脚垫或关键帧。每次停留 3–6 秒后，沿已检查的路径移向随机活动点，并贴合地形；正常速度约为 0.45 m/s，转弯时放慢前进速度，同时沿最短方向以 90°/秒转向，对齐后恢复正常速度。Blender 中使用实时计时器，时间轴停止时也会移动；`bpy.context.scene['sheep_enabled'] = False` 可暂停。重新打开文件后，若 Blender 没有自动运行受信任的脚本，可在文本编辑器打开内置 `Sheep_Movement.py` 并运行，恢复移动。
 
 **调整时刻**：`import timeofday; timeofday.apply(17.4)` 把太阳、月亮、天空、灯光、雾、泛光、夜色调整和曝光切到该时刻，用 Cycles 渲染就能看到那个时刻的参考效果。
 
@@ -200,6 +207,7 @@ emission  = 窗玻璃和灯罩随 lamp 变化的自发光
 | 文件 | 内容 |
 | --- | --- |
 | `scene.glb` | +Y 向上，EXT_meshopt_compression + KHR_mesh_quantization。节点 `extras.shade`：`lit`（COLOR_0 = 反照率；COLOR_1 = √(S/skyScale)，a 为 √(Lp/lampScale)；COLOR_2 = √(B/bounceScale)，a 为 Z）、`terrain`（反照率 + 平面 UV）、`treeLOD`（`<变体>_L0/_L1/_L2`）、`water`、`smoke`；相机 CAM_Overview / CAM_Closeup 的 extras 带 `lens_mm`、`sensor_mm`、`fstop`、`target` |
+| `sheep.glb` / `sheep-navigation.json` | 独立的小羊模型与地形、障碍导航数据，用于运行时移动 |
 | `terrain_sky.png` | 1024²，√(S/skyScale) |
 | `terrain_bounce.png` | 512²，√(B/bounceScale) |
 | `terrain_lamp.png` | 512² 灰度，√(Lp/lampScale) |

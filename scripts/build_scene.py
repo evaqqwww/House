@@ -19,7 +19,7 @@ if SCRIPTS not in sys.path:
 
 import common  # noqa: E402
 
-PARTS = ["build_terrain", "build_house", "build_trees", "build_lighting"]
+PARTS = ["build_terrain", "build_house", "build_trees", "build_lighting", "build_sheep"]
 BLEND_PATH = os.path.join(common.ROOT, "house.blend")
 
 

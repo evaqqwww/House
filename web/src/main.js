@@ -9,6 +9,9 @@ import { hourDelta } from './timeofday.js';
 import { createGpuTimer } from './gputimer.js';
 import { loadViewLut } from './viewlut.js';
 import { createAmbience } from './ambience.js';
+import { createSheepAudio } from './sheep-audio.js';
+import { createSheepInteraction } from './sheep-interaction.js';
+import { createSheepHearts } from './sheep-hearts.js';
 import * as ui from './ui.js';
 
 const params = new URLSearchParams(location.search);
@@ -63,7 +66,7 @@ async function main() {
   const { manifest } = assets;
   const lighting = createLighting(manifest);
   const world = buildWorld(assets, lighting, renderer);
-  const { forest, shadows, grass, fireflies } = world;
+  const { forest, shadows, grass, fireflies, sheep } = world;
 
   const rig = createCameraRig({
     gltf: assets.gltf,
@@ -75,6 +78,19 @@ async function main() {
   });
   const camera = rig.camera;
   world.scene.add(camera);
+
+  const sheepHearts = createSheepHearts({ domElement: renderer.domElement, root: sheep.root, camera,
+    iconUrl: `${ASSET_BASE}heart-icon-64.png` });
+  const sheepAudio = createSheepAudio({ url: `${ASSET_BASE}cute_lamb.ogg`, onPlay: () => sheepHearts.emit() });
+  const sheepInteraction = createSheepInteraction({ domElement: renderer.domElement,
+    wakeElement: document.getElementById('wake-controls'), camera, root: sheep.root, scene: world.scene,
+    ignoredMeshes: [grass.mesh, sheep.contactShadow], onTap: () => { void sheepAudio.trigger(); } });
+  window.addEventListener('pagehide', (event) => {
+    if (event.persisted) return;
+    sheepInteraction.dispose();
+    sheepAudio.dispose();
+    sheepHearts.dispose();
+  });
 
   const post = createPost(renderer, world.scene, camera, lighting, manifest, tier, viewLut);
   const { composer } = post;
@@ -276,6 +292,8 @@ async function main() {
     }
 
     const focus = rig.update(dt);
+    sheep.update(dt);
+    sheepHearts.update();
     const size = renderer.getDrawingBufferSize(tmpSize);
     forest.update(camera, size.y);
     const tanHalf = Math.tan(MathUtils.degToRad(camera.fov) / 2);

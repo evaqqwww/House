@@ -6366,6 +6366,8 @@
   "terrain_zenith.png": 129536,
   "ground_albedo.png": 94145,
   "grass.png": 407139,
-  "ground_cover.png": 15517
+  "ground_cover.png": 15517,
+  "sheep.glb": 237088,
+  "sheep-navigation.json": 4880
  }
 }
