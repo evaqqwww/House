@@ -62,7 +62,7 @@ function dayPart(h) {
  */
 export function initControls({ onHour, onTimePreset, onPreset, onQuality, touch }) {
   $('panel').hidden = false;
-  $('top').hidden = false;
+  $('top').hidden = true;
   $('hint').textContent = touch ? '单指拖动旋转 · 双指缩放平移' : '拖动旋转 · 滚轮缩放 · 右键平移';
   const panel = $('panel');
   const timeWindow = $('time-window');
@@ -262,7 +262,7 @@ export function createFpsBadge(onToggle) {
   const el = $('fps');
   const rate = $('fps-rate');
   const extra = $('fps-extra');
-  el.hidden = false;
+  el.hidden = true;
   el.addEventListener('click', onToggle);
   let last = 0;
   return (read) => {

@@ -48,7 +48,7 @@ async function main() {
     ui.showError(log || 'shader compile/link failed', 'shader');
   };
   const device = detectDevice(renderer.getContext());
-  let quality = QUALITY_ALIASES[params.get('quality')] || 'auto';
+  let quality = QUALITY_ALIASES[params.get('quality')] || 'high';
   let tier = TIERS[quality === 'auto' ? device.tier : quality];
   const dpr = window.devicePixelRatio || 1;
   renderer.setPixelRatio(Math.min(dpr, tier.maxPixelRatio));
