@@ -1,6 +1,13 @@
+# Web dependencies and build output
 web/node_modules/
 web/dist/
-*.blend1
+
+# Blender backups and Python bytecode
+*.blend[0-9]*
 __pycache__/
 *.pyc
+
+# Local previews, audio processing, and editor settings
+/outputs/
+/.audio_work/
 .claude/

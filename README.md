@@ -18,6 +18,7 @@ scripts/               Blender 端：场景生成、时间模型、烘焙导出
   build_lighting.py    太阳、月亮、灯笼点光源、天空、相机、渲染与合成器设置
   build_sheep.py       小羊模型与网页独立资源
   sheep_movement.py    小羊的地形贴合与避障移动
+  tests/               小羊移动的 Python 回归测试
   build_scene.py       依次运行以上模块，保存 house.blend
   timeofday.json       时间模型（Blender 和网页共用）
   timeofday.py         时间模型求值，并应用到 Blender 场景
@@ -26,6 +27,7 @@ web/                   网页
   index.html
   vite.config.js
   src/                 网页源码（见“网页源码”）
+  tests/               镜头、交互、时间手势、音频和小羊移动的回归测试
   scripts/
     optimize-glb.mjs   导出后重新压缩 scene.glb
     make-agx-lut.py    生成 src/agx-lut.png
@@ -42,10 +44,18 @@ npm install
 npm run dev           # http://127.0.0.1:5173
 npm run dev:lan       # 监听 0.0.0.0:5173，同一 Wi-Fi 下的手机打开 http://<电脑局域网 IP>:5173
 npm run build         # 输出到 dist/（相对路径，可放到任意静态服务器的子目录）
-npm test              # 检查点按、长按、拖动、取消和多指手势
+npm test              # 检查镜头、交互、时间手势、音频和小羊移动
 npm run preview       # http://127.0.0.1:4173 预览 dist/
 npm run preview:lan   # 局域网预览 dist/，手机实测用这个
 ```
+
+在项目根目录运行 Blender 端的移动逻辑测试（不需要启动 Blender）：
+
+```bash
+python -B -m unittest discover -s scripts/tests -v
+```
+
+`web/public/assets/` 和 `web/src/` 下的图片、模型与音频是网页运行资源，需保留并纳入版本管理。临时预览图统一放在 `outputs/`，音频处理临时文件放在 `.audio_work/`；这两个目录与 `web/dist/`、Python 缓存、Blender 自动备份均已忽略，可按需清理。`web/node_modules/` 是本地开发依赖，不纳入版本管理。
 
 手机访问电脑上的服务时，Windows 防火墙需要允许 Node.js 在专用网络上的入站连接。
 
