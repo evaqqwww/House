@@ -72,6 +72,42 @@ export function createCameraRig({ gltf, manifest, forest, domElement, interactio
     t.set(HOUSE.x + d.x, MathUtils.clamp(t.y, 0, 6), HOUSE.z + d.z);
   });
 
+  const document = domElement.ownerDocument;
+  const activePointers = new Set();
+
+  // enabled only gates input; it does not clear OrbitControls' tracked fingers.
+  // Reconnect through the public API so an interrupted pinch cannot leave a ghost finger.
+  function resetInteraction() {
+    const pointers = [...activePointers];
+    activePointers.clear();
+    controls.connect(domElement);
+    for (const id of pointers) {
+      if (domElement.hasPointerCapture(id)) domElement.releasePointerCapture(id);
+    }
+  }
+
+  domElement.addEventListener('pointerdown', (e) => {
+    if (!controls.enabled) return;
+    // A new primary touch (or mouse press) starts a new gesture, even after a missed end event.
+    if (activePointers.size && (e.isPrimary || e.pointerType === 'mouse')) resetInteraction();
+    activePointers.add(e.pointerId);
+  }, { capture: true });
+  document.addEventListener('pointerup', (e) => activePointers.delete(e.pointerId), { capture: true });
+  document.addEventListener('pointercancel', (e) => {
+    if (activePointers.has(e.pointerId)) resetInteraction();
+  }, { capture: true });
+  domElement.addEventListener('lostpointercapture', (e) => {
+    // Normal pointerup removes the id first; preserve rotation by a remaining finger.
+    if (activePointers.has(e.pointerId)) resetInteraction();
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (activePointers.size && e.pointerType === 'mouse' && e.buttons === 0) resetInteraction();
+  }, { capture: true, passive: true });
+  document.defaultView.addEventListener('blur', resetInteraction);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) resetInteraction();
+  });
+
   const state = {
     mode: 'overview',
     hfov: presets.overview.hfov,
@@ -102,6 +138,7 @@ export function createCameraRig({ gltf, manifest, forest, domElement, interactio
   function setMode(name, { instant = false } = {}) {
     const mode = MODE_ALIASES[String(name).toLowerCase()];
     if (!mode) throw new Error(`unknown camera preset "${name}"`);
+    resetInteraction();
     const prev = state.mode;
     state.mode = mode;
     if (mode === 'free') {
