@@ -8,6 +8,7 @@ import { createResolutionController, detectDevice, QUALITY_ALIASES, TIERS } from
 import { hourDelta } from './timeofday.js';
 import { createGpuTimer } from './gputimer.js';
 import { loadViewLut } from './viewlut.js';
+import { createAmbience } from './ambience.js';
 import * as ui from './ui.js';
 
 const params = new URLSearchParams(location.search);
@@ -121,6 +122,8 @@ async function main() {
 
   // ---------------------------------------------------------------- time of day
   const tod = lighting.tod;
+  const ambience = createAmbience({ baseUrl: ASSET_BASE, sunPath: tod.model.sunPath, initialHour: tod.defaultHour });
+  window.addEventListener('pagehide', (event) => { if (!event.persisted) ambience.dispose(); });
   let sliderHour = tod.defaultHour;
   let todAnim = null;
   function setHour(h, { fromSlider = false } = {}) {
@@ -128,6 +131,7 @@ async function main() {
     sliderHour = Math.min(Math.max(h, 0), 24);
     if (!Number.isFinite(sliderHour)) sliderHour = 0;
     lighting.setHour(sliderHour);
+    ambience.setHour(sliderHour);
     const preset = Object.entries(tod.presets).find(([, ph]) => Math.abs(hourDelta(ph, sliderHour)) < 0.01)?.[0] ?? '';
     ui.reflectState({ sliderHour, todPreset: preset });
   }
