@@ -107,6 +107,7 @@ def plank_col(r, z):
 
 
 def roof_col(r):
+    """Sun-faded clay tiles with warm ochre variation."""
     c = C("roof")
     t = r.random()
     if t < 0.3:

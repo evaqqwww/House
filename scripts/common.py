@@ -39,7 +39,7 @@ PALETTE = {
     "leaf_light": "#bfd36e", "leaf_mid": "#7faa52", "leaf_dark": "#3f6e3f", "leaf_teal": "#5c8f6c",
     "trunk": "#6b5240", "trunk_dark": "#4a3a2f",
     "wall_plank": "#6f7449", "timber": "#4b5033",
-    "roof": "#7d6a64", "roof_dark": "#5f514d", "roof_light": "#968079",
+    "roof": "#ca8148", "roof_dark": "#9e6138", "roof_light": "#df9f62",
     "stone": "#6e706b", "stone_light": "#8f8e86", "stone_dark": "#535550",
     "rock": "#a89d87", "rock_dark": "#7f7666", "rock_light": "#c2b8a2",
     "glass": "#3b3653",

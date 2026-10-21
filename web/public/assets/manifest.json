@@ -1,8 +1,8 @@
 {
  "version": 2,
  "skyScale": 1.088843,
- "bounceScale": 0.075839,
- "lampScale": 1.472739,
+ "bounceScale": 0.081805,
+ "lampScale": 1.471552,
  "terrainUV": {
   "half": 55
  },
@@ -6359,15 +6359,15 @@
   }
  },
  "files": {
-  "scene.glb": 4575624,
-  "terrain_sky.png": 611014,
-  "terrain_bounce.png": 146356,
-  "terrain_lamp.png": 35552,
-  "terrain_zenith.png": 129536,
-  "ground_albedo.png": 94145,
+  "scene.glb": 4569728,
+  "terrain_sky.png": 611201,
+  "terrain_bounce.png": 144557,
+  "terrain_lamp.png": 35537,
+  "terrain_zenith.png": 129559,
+  "ground_albedo.png": 94140,
   "grass.png": 407139,
   "ground_cover.png": 15517,
   "sheep.glb": 237088,
-  "sheep-navigation.json": 4880
+  "sheep-navigation.json": 4879
  }
 }
