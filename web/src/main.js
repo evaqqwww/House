@@ -96,8 +96,10 @@ async function main() {
   const { composer } = post;
 
   // ---------------------------------------------------------------- resolution
+  let resizePending = false;
   const resolution = createResolutionController({
     targetFps: device.targetFps,
+    canAdapt: () => quality === 'auto',
     onChange: (pr) => {
       renderer.setPixelRatio(pr);
       composer.setSize(window.innerWidth, window.innerHeight);
@@ -171,8 +173,10 @@ async function main() {
   const initialCam = presets.camera || 'overview';
   setPreset(initialCam === 'free' ? 'overview' : initialCam, { instant: true });
   if (initialCam === 'free') setPreset('free');
-  window.addEventListener('resize', resize);
-  window.visualViewport?.addEventListener('resize', resize);
+  // Resizing clears the canvas; defer browser resize events until a frame can repaint it immediately.
+  const requestResize = () => { resizePending = true; };
+  window.addEventListener('resize', requestResize);
+  window.visualViewport?.addEventListener('resize', requestResize);
 
   ui.initControls({
     onHour: (h) => setHour(h, { fromSlider: false }),
@@ -281,6 +285,12 @@ async function main() {
     frameTimes.push(ms);
     if (frameTimes.length > 120) frameTimes.shift();
     last = now;
+    if (resizePending) {
+      resizePending = false;
+      resize();
+    }
+    // Apply resolution changes before reading dimensions and drawing, so no cleared canvas is presented.
+    resolution.sample(ms, now);
     lighting.U.uTime.value += dt;
 
     if (todAnim) {
@@ -315,7 +325,6 @@ async function main() {
     totals.calls = renderer.info.render.calls;
     totals.triangles = renderer.info.render.triangles;
     frames++;
-    resolution.sample(ms, now);
     if (frames === 1) ui.hideLoading();
     fpsBadge(badge);
     hud.update(stats);

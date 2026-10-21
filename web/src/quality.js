@@ -63,9 +63,9 @@ export function detectDevice(gl) {
 
 /**
  * Adapts the render pixel ratio to the measured frame time: down when frames are slower than the target, up again
- * (probing, with a cooldown so it does not oscillate) when there is headroom.
+ * (probing, with a cooldown so it does not oscillate) when there is headroom. canAdapt limits this to auto quality.
  */
-export function createResolutionController({ targetFps, onChange }) {
+export function createResolutionController({ targetFps, onChange, canAdapt = () => true }) {
   const st = {
     targetMs: 1000 / targetFps,
     scale: 1,
@@ -83,7 +83,7 @@ export function createResolutionController({ targetFps, onChange }) {
   function setRange(min, max, reset = false) {
     st.min = Math.min(min, max);
     st.max = max;
-    const next = reset ? max : Math.min(Math.max(st.scale, st.min), st.max);
+    const next = reset || !canAdapt() ? max : Math.min(Math.max(st.scale, st.min), st.max);
     if (next !== st.scale || reset) {
       st.scale = next;
       onChange(st.scale);
@@ -102,6 +102,12 @@ export function createResolutionController({ targetFps, onChange }) {
 
   /** call once per frame with the frame time in ms */
   function sample(ms, now) {
+    if (!canAdapt()) {
+      st.samples.length = 0;
+      st.windowStart = now;
+      st.upStreak = 0;
+      return;
+    }
     if (now < st.cooldownUntil) {
       st.samples.length = 0;
       st.windowStart = now;
